@@ -1,5 +1,5 @@
 #!/bin/bash
-# 配置平台权限（兼容 bash 3.2，不使用关联数组）
+# 配置平台权限（兼容 bash 3.2 和 macOS sed）
 # 用法: ./configure_platforms.sh [android|macos|all]
 #       默认 all
 
@@ -7,11 +7,9 @@ set -e
 
 echo "🔧 开始配置平台权限..."
 
-# 检测运行平台
 TARGET="${1:-all}"
 
 # ---------- 工具函数 ----------
-# 检查文件是否存在
 check_file() {
     if [ ! -f "$1" ]; then
         echo "    ⚠️  文件不存在: $1"
@@ -20,21 +18,34 @@ check_file() {
     return 0
 }
 
-# 在文件的指定锚点之前插入内容（兼容 macOS sed）
+# ⭐ 使用 awk 在包含锚点的行之前插入内容（兼容 macOS）
 insert_before() {
     local file="$1"
     local anchor="$2"
     local content="$3"
-    if grep -Fq "$anchor" "$file"; then
-        # macOS 和 Linux 的 sed 兼容写法
-        sed -i.bak "/$anchor/i\\
-$content" "$file"
-        rm -f "${file}.bak"
-        return 0
-    else
+    if ! grep -Fq "$anchor" "$file"; then
         echo "    ⚠️  未找到锚点 '$anchor'，跳过插入"
         return 1
     fi
+
+    # 将 content 中的 \n 转换为真正的换行
+    local content_escaped=$(echo "$content" | sed 's/\\n/\
+/g')
+
+    # 使用 awk 在第一次包含 anchor 的行之前插入 content_escaped
+    awk -v anchor="$anchor" -v content="$content_escaped" '
+        {
+            if (!inserted && index($0, anchor) > 0) {
+                print content
+                inserted = 1
+            }
+            print
+        }
+    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+
+    # 删除可能的备份（如果存在）
+    rm -f "${file}.bak"
+    return 0
 }
 
 # ---------- Android 配置 ----------
@@ -54,15 +65,11 @@ configure_android() {
         return
     fi
 
-    # 读取权限文件，逐行处理
     while IFS= read -r line || [ -n "$line" ]; do
-        # 去除首尾空格
         line_trimmed="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        # 跳过空行和注释行（以 # 开头）
         [ -z "$line_trimmed" ] && continue
         echo "$line_trimmed" | grep -q '^#' && continue
 
-        # 提取权限名称
         if echo "$line_trimmed" | grep -q 'android:name="'; then
             perm_name=$(echo "$line_trimmed" | sed -n 's/.*android:name="\([^"]*\)".*/\1/p')
             if [ -n "$perm_name" ]; then
@@ -76,7 +83,7 @@ configure_android() {
         fi
     done < "$PERMS_FILE"
 
-    # 启用 usesCleartextTraffic
+    # usesCleartextTraffic
     if ! grep -q 'android:usesCleartextTraffic="true"' "$ANDROID_MANIFEST"; then
         sed -i.bak 's|<application|<application android:usesCleartextTraffic="true"|' "$ANDROID_MANIFEST"
         rm -f "${ANDROID_MANIFEST}.bak"
@@ -85,7 +92,7 @@ configure_android() {
         echo "    ✅ usesCleartextTraffic 已存在"
     fi
 
-    # 添加 tools 命名空间
+    # tools namespace
     if ! grep -q 'xmlns:tools="http://schemas.android.com/tools"' "$ANDROID_MANIFEST"; then
         sed -i.bak 's|<manifest |<manifest xmlns:tools="http://schemas.android.com/tools" |' "$ANDROID_MANIFEST"
         rm -f "${ANDROID_MANIFEST}.bak"
@@ -105,8 +112,7 @@ configure_macos() {
         return
     fi
 
-    # 解析 entitlements 文件，构建 key-value 列表（不使用关联数组）
-    # 使用两个简单的数组
+    # 解析 key-value（不使用关联数组，用普通数组）
     KEYS=()
     VALUES=()
     current_key=""
@@ -144,7 +150,7 @@ configure_macos() {
         fi
     done
 
-    # 配置 Info.plist 蓝牙说明
+    # Info.plist 蓝牙说明
     local INFO_PLIST="macos/Runner/Info.plist"
     if check_file "$INFO_PLIST"; then
         echo "  → 配置 macOS Info.plist 蓝牙说明..."
