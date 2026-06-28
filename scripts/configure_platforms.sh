@@ -1,5 +1,5 @@
 #!/bin/bash
-# 配置平台权限（兼容 bash 3.2 和 macOS sed）
+# 配置平台权限（兼容 bash 3.2 和 macOS）
 # 用法: ./configure_platforms.sh [android|macos|all]
 #       默认 all
 
@@ -18,7 +18,7 @@ check_file() {
     return 0
 }
 
-# ⭐ 使用 awk 在包含锚点的行之前插入内容（兼容 macOS）
+# 在包含锚点的行之前插入内容（使用 awk，兼容 macOS）
 insert_before() {
     local file="$1"
     local anchor="$2"
@@ -43,7 +43,6 @@ insert_before() {
         }
     ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
 
-    # 删除可能的备份（如果存在）
     rm -f "${file}.bak"
     return 0
 }
