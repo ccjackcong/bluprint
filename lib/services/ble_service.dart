@@ -332,21 +332,23 @@ class BleService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _autoConnect() async {
-    if (_savedDeviceId == null) return;
-    _logMessage('尝试自动连接已保存的打印机...');
-    try {
-      // ⭐ 使用 FlutterBluePlus 的系统设备查询
-      final devices = await FlutterBluePlus.systemDevices([_savedDeviceId!]);
-      if (devices.isNotEmpty) {
-        await connect(devices.first);
-      } else {
-        _logMessage('未找到已保存的设备，需手动连接');
-      }
-    } catch (e) {
-      _logMessage('自动连接失败: $e');
+  // lib/services/ble_service.dart
+Future<void> _autoConnect() async {
+  if (_savedDeviceId == null) return;
+  _logMessage('尝试自动连接已保存的打印机...');
+  try {
+    // ⭐ 将 String 转换为 Guid
+    final deviceIdGuid = Guid.fromString(_savedDeviceId!);
+    final devices = await FlutterBluePlus.systemDevices([deviceIdGuid]);
+    if (devices.isNotEmpty) {
+      await connect(devices.first);
+    } else {
+      _logMessage('未找到已保存的设备，需手动连接');
     }
+  } catch (e) {
+    _logMessage('自动连接失败: $e');
   }
+}
 
   // ── 公开的辅助方法 ──
   String get statusText {
