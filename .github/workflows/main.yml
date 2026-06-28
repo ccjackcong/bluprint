@@ -19,9 +19,15 @@ jobs:
 
       - run: flutter pub get
 
-      # ⭐ 修复：确保 Android 平台支持完整
+      # ⭐ 确保 Android 平台文件完整
       - name: Ensure Android platform support
         run: flutter create --platforms=android .
+
+      # ⭐ 配置 Android 权限（蓝牙、网络等）
+      - name: Configure Android permissions
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh android
 
       - run: flutter analyze || true
 
@@ -48,11 +54,11 @@ jobs:
       - name: Add macOS desktop support
         run: flutter create --platforms=macos .
 
-      # ⭐ 修复：配置权限（仅在 macOS 构建中运行）
-      - name: Configure platform permissions
+      # ⭐ 配置 macOS 权限（entitlements、Info.plist）
+      - name: Configure macOS permissions
         run: |
           chmod +x scripts/configure_platforms.sh
-          ./scripts/configure_platforms.sh macos   # 传入参数，只配置 macOS
+          ./scripts/configure_platforms.sh macos
 
       - run: flutter build macos --release
 
