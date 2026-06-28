@@ -1,12 +1,5 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
-
-// ⭐ 关键修改：macOS 和 Web 使用 Mock 版本
-import 'services/ble_service.dart'
-    if (dart.library.macos) 'services/ble_service_mock.dart'
-    if (dart.library.web) 'services/ble_service_mock.dart';
-
+import 'services/ble_service.dart';  // 直接导入，不再条件判断
 import 'services/http_server.dart';
 import 'pages/print_page.dart';
 import 'pages/settings_page.dart';
@@ -14,18 +7,16 @@ import 'pages/settings_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化 BLE（带错误保护）
   try {
     await BleService.instance.init();
   } catch (e) {
-    debugPrint('⚠️ BLE 初始化失败（Mac/Web 可能正常）: $e');
+    debugPrint('BLE 初始化失败: $e');
   }
 
-  // 启动 HTTP 服务（带错误保护）
   try {
     await HttpPrintServer.instance.start();
   } catch (e) {
-    debugPrint('⚠️ HTTP 服务启动失败: $e');
+    debugPrint('HTTP 服务启动失败: $e');
   }
 
   runApp(const SanjoyPrintApp());
