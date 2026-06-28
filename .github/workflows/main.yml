@@ -7,69 +7,29 @@ on:
     branches: [ main ]
 
 jobs:
-  # ---------- Android 打包 ----------
   build-android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
-
       - run: flutter pub get
 
-      # 确保 Android 平台文件完整
       - name: Ensure Android platform support
         run: flutter create --platforms=android .
 
-      # ⭐ 修复 Gradle 配置（直接内联，无需脚本文件）
       - name: Fix Gradle configuration
         run: |
-          # 设置 app/build.gradle
-          APP_GRADLE="android/app/build.gradle"
-          if [ -f "$APP_GRADLE" ]; then
-            echo "设置 compileSdkVersion=34, targetSdkVersion=34"
-            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 34/' "$APP_GRADLE" || true
-            if ! grep -q 'compileSdkVersion' "$APP_GRADLE"; then
-              sed -i '/android {/a \    compileSdkVersion 34' "$APP_GRADLE"
-            fi
-            if grep -q 'targetSdkVersion' "$APP_GRADLE"; then
-              sed -i 's/targetSdkVersion [0-9]*/targetSdkVersion 34/' "$APP_GRADLE"
-            else
-              sed -i '/android {/a \    targetSdkVersion 34' "$APP_GRADLE"
-            fi
-            if ! grep -q 'minSdkVersion' "$APP_GRADLE"; then
-              sed -i '/android {/a \    minSdkVersion 21' "$APP_GRADLE"
-            fi
-            echo "✅ app/build.gradle 已更新"
-          fi
+          chmod +x scripts/fix_android_gradle.sh
+          ./scripts/fix_android_gradle.sh
 
-          # 设置根 build.gradle 的 ext 属性
-          ROOT_GRADLE="android/build.gradle"
-          if [ -f "$ROOT_GRADLE" ]; then
-            if ! grep -q 'ext {' "$ROOT_GRADLE"; then
-              echo "在根 build.gradle 中添加 ext 属性"
-              sed -i '/buildscript {/i \
-        ext {\n\
-            compileSdkVersion = 34\n\
-            targetSdkVersion = 34\n\
-            minSdkVersion = 21\n\
-        }\n' "$ROOT_GRADLE"
-              echo "✅ 根 build.gradle 已更新"
-            else
-              echo "✅ ext 属性已存在"
-            fi
-          fi
-
-      # 配置 Android 权限
       - name: Configure Android permissions
         run: |
           chmod +x scripts/configure_platforms.sh
           ./scripts/configure_platforms.sh android
 
       - run: flutter analyze || true
-
       - run: flutter build apk --release
 
       - name: Upload APK
@@ -78,16 +38,13 @@ jobs:
           name: android-release
           path: build/app/outputs/flutter-apk/app-release.apk
 
-  # ---------- macOS 打包（不变） ----------
   build-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
-
       - run: flutter pub get
 
       - name: Add macOS desktop support
