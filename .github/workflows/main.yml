@@ -1,24 +1,52 @@
-name: sanjoyapp_print
-description: SanJoyPrintApp - 接收Web端打印数据，通过BLE发送到标签打印机
-publish_to: 'none'
-version: 1.0.0+1
+name: Build SanJoyApp
 
-environment:
-  sdk: '>=3.1.0 <4.0.0'
+on:
+  push:
+    branches: [ main ]   # 按需改为你的默认分支
+  pull_request:
+    branches: [ main ]
 
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_blue_plus: ^1.32.0
-  shelf: ^1.4.1
-  shelf_router: ^1.1.4
-  shared_preferences: ^2.2.2
-  cupertino_icons: ^1.0.6
+jobs:
+  # ---------- Android 打包 ----------
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.1
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'   # 可以改为你实际使用的版本
 
-flutter:
-  uses-material-design: true
+      - run: flutter pub get
+
+      # 可选：检查代码格式（非必须）
+      - run: flutter analyze
+
+      # 构建 release APK
+      - run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  # ---------- macOS 打包 ----------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+
+      - run: flutter pub get
+
+      - run: flutter build macos --release
+
+      - name: Upload macOS App
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: build/macos/Build/Products/Release/*.app
