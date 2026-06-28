@@ -92,7 +92,7 @@ MACOS_ENTITLEMENTS_FILE="platform_config/macos_entitlements.txt"
 if check_file "$MACOS_ENTITLEMENTS_FILE"; then
     # 解析 entitlements 文件，构建 key-value 数组
     # 假设文件格式为：<key>...</key> 和 <true/> 或 <false/> 交替，忽略空行和注释
-    declare -A ENT_MAP
+    declare: -A: invalid option
     current_key=""
     while IFS= read -r line; do
         # 去除前后空格
