@@ -18,14 +18,13 @@ jobs:
           flutter-version: '3.22.0'
 
       - run: flutter pub get
-      
+
+      # ⭐ 修复：确保 Android 平台支持完整
       - name: Ensure Android platform support
-         run: flutter create --platforms=android .
-         
-      # ⭐ 分析改为可选（不阻塞构建）
+        run: flutter create --platforms=android .
+
       - run: flutter analyze || true
 
-      # 构建 release APK
       - run: flutter build apk --release
 
       - name: Upload APK
@@ -46,17 +45,15 @@ jobs:
 
       - run: flutter pub get
 
-      # ⭐ 关键步骤：添加 macOS 桌面支持
       - name: Add macOS desktop support
         run: flutter create --platforms=macos .
 
-      # ⭐ 关键步骤：配置权限（蓝牙、网络等）
+      # ⭐ 修复：配置权限（仅在 macOS 构建中运行）
       - name: Configure platform permissions
         run: |
           chmod +x scripts/configure_platforms.sh
-          ./scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh macos   # 传入参数，只配置 macOS
 
-      # 构建 macOS release
       - run: flutter build macos --release
 
       - name: Upload macOS App
