@@ -1,6 +1,7 @@
 // lib/services/http_server.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';           // ⭐ 添加这一行，提供 HttpServer 类
 import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
