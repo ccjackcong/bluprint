@@ -1,0 +1,22 @@
+# AndroidManifest.xml 中需要添加的权限（在 <manifest> 标签内）
+
+<!-- 蓝牙相关权限 -->
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+<!-- BLE 扫描需要定位权限（Android < 12） -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+<!-- 网络权限（HTTP Server） -->
+<uses-permission android:name="android.permission.INTERNET" />
+
+<!-- Android 12+ 声明不需要位置信息来扫描蓝牙 -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="s" />
+
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+    tools:targetApi="s" />
