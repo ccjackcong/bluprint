@@ -19,39 +19,34 @@ jobs:
       - name: Ensure Android platform support
         run: flutter create --platforms=android .
 
-      # ⭐ 直接内联修复 Gradle，安全且无 YAML 语法问题
       - name: Fix Gradle configuration
         run: |
-          # 根 build.gradle：添加 ext 属性（如果不存在）
-          if ! grep -q 'ext {' android/build.gradle; then
-            echo "在根 build.gradle 中添加 ext 块"
-            sed -i.bak '/buildscript {/i \
-        ext {\
-            compileSdkVersion = 34\
-            targetSdkVersion = 34\
-            minSdkVersion = 21\
-        }\
-        ' android/build.gradle
+          # 修复根 build.gradle：添加 ext 属性（如果不存在）
+          ROOT_GRADLE="android/build.gradle"
+          if ! grep -q 'ext {' "$ROOT_GRADLE"; then
+            echo "添加 ext 块到根 build.gradle"
+            # 在 buildscript 前插入 ext 块
+            sed -i.bak '/buildscript {/i ext { compileSdkVersion = 34; targetSdkVersion = 34; minSdkVersion = 21 }' "$ROOT_GRADLE"
           else
-            echo "✅ ext 已存在"
+            echo "ext 已存在"
           fi
 
-          # app/build.gradle：设置 compileSdkVersion 等
+          # 修复 app/build.gradle
           APP_GRADLE="android/app/build.gradle"
           if [ -f "$APP_GRADLE" ]; then
             sed -i.bak 's/compileSdkVersion [0-9]*/compileSdkVersion 34/' "$APP_GRADLE"
             if ! grep -q 'compileSdkVersion' "$APP_GRADLE"; then
-              sed -i.bak '/android {/a \    compileSdkVersion 34' "$APP_GRADLE"
+              sed -i.bak '/android {/a compileSdkVersion 34' "$APP_GRADLE"
             fi
             if grep -q 'targetSdkVersion' "$APP_GRADLE"; then
               sed -i.bak 's/targetSdkVersion [0-9]*/targetSdkVersion 34/' "$APP_GRADLE"
             else
-              sed -i.bak '/android {/a \    targetSdkVersion 34' "$APP_GRADLE"
+              sed -i.bak '/android {/a targetSdkVersion 34' "$APP_GRADLE"
             fi
             if ! grep -q 'minSdkVersion' "$APP_GRADLE"; then
-              sed -i.bak '/android {/a \    minSdkVersion 21' "$APP_GRADLE"
+              sed -i.bak '/android {/a minSdkVersion 21' "$APP_GRADLE"
             fi
-            echo "✅ app/build.gradle 已更新"
+            echo "app/build.gradle 已更新"
           fi
 
       - name: Configure Android permissions
