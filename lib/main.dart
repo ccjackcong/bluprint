@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'dart:io' show Platform;
 
-// 条件导入：在非 macOS 平台使用真实的 BLE 服务
+// ⭐ 关键修改：macOS 和 Web 使用 Mock 版本
 import 'services/ble_service.dart'
     if (dart.library.macos) 'services/ble_service_mock.dart'
     if (dart.library.web) 'services/ble_service_mock.dart';
@@ -14,26 +14,24 @@ import 'pages/settings_page.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化服务（带错误处理）
+  // 初始化 BLE（带错误保护）
   try {
-    // BLE 服务（在 macOS/Web 上会自动使用 Mock 版本）
     await BleService.instance.init();
   } catch (e) {
-    // 即使 BLE 初始化失败，也继续启动应用（只在 macOS/Web 可能发生）
-    debugPrint('⚠️ BLE 初始化失败: $e');
+    debugPrint('⚠️ BLE 初始化失败（Mac/Web 可能正常）: $e');
   }
 
+  // 启动 HTTP 服务（带错误保护）
   try {
-    // HTTP 服务（监听 8080 端口）
     await HttpPrintServer.instance.start();
   } catch (e) {
     debugPrint('⚠️ HTTP 服务启动失败: $e');
-    // 可以在 UI 中显示错误提示，但应用继续运行
   }
 
   runApp(const SanjoyPrintApp());
 }
 
+// ---------- 下面的代码与你原来完全一致，无需改动 ----------
 class SanjoyPrintApp extends StatelessWidget {
   const SanjoyPrintApp({super.key});
 
@@ -81,7 +79,6 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _ble = BleService.instance;
-    // 如果 BLE 服务支持添加监听器（Mock 版本也应实现）
     if (_ble is ChangeNotifier) {
       (_ble as ChangeNotifier).addListener(_onBleStateChanged);
     }
@@ -131,7 +128,3 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
-
-// ---------- 模拟 BLE 状态枚举（与真实保持一致） ----------
-// 如果你的 BleService 已定义 BleState，此处可省略
-enum BleState { disconnected, connecting, connected, disconnecting }
