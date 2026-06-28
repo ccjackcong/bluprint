@@ -18,7 +18,10 @@ jobs:
           flutter-version: '3.22.0'
 
       - run: flutter pub get
-
+      
+      - name: Ensure Android platform support
+         run: flutter create --platforms=android .
+         
       # ⭐ 分析改为可选（不阻塞构建）
       - run: flutter analyze || true
 
