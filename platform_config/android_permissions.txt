@@ -1,129 +1,22 @@
-#!/bin/bash
-# 配置 Android / macOS 平台的蓝牙、网络等权限（支持从外部文件读取 Android 权限）
-# 用法：在 flutter create --platforms=macos . 之后运行此脚本
+# AndroidManifest.xml 中需要添加的权限（在 <manifest> 标签内）
 
-set -e
+<!-- 蓝牙相关权限 -->
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-echo "🔧 开始配置平台权限..."
+<!-- BLE 扫描需要定位权限（Android < 12） -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-# ---------- 工具函数 ----------
-# 安全地在文件中的指定锚点（独立行）之前插入内容
-insert_before() {
-    local file="$1"
-    local anchor="$2"
-    local content="$3"
-    if grep -Fq "$anchor" "$file"; then
-        sed -i.bak "/$anchor/i\\
-$content" "$file"
-        rm -f "${file}.bak"
-        return 0
-    else
-        echo "    ⚠️  未找到锚点 '$anchor'，跳过插入"
-        return 1
-    fi
-}
+<!-- 网络权限（HTTP Server） -->
+<uses-permission android:name="android.permission.INTERNET" />
 
-# 检查文件是否存在
-check_file() {
-    if [ ! -f "$1" ]; then
-        echo "    ⚠️  文件不存在: $1"
-        return 1
-    fi
-    return 0
-}
+<!-- Android 12+ 声明不需要位置信息来扫描蓝牙 -->
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="s" />
 
-# ---------- Android 配置 ----------
-ANDROID_MANIFEST="android/app/src/main/AndroidManifest.xml"
-PERMISSIONS_FILE="platform_config/android_permissions.txt"
-
-if check_file "$ANDROID_MANIFEST"; then
-    echo "  → 配置 Android 权限..."
-
-    # 如果权限配置文件存在，则从文件中读取
-    if check_file "$PERMISSIONS_FILE"; then
-        # 读取文件内容，去除空行和注释行（以 # 开头或仅含空格）
-        PERM_LINES=$(grep -vE '^\s*$|^\s*#' "$PERMISSIONS_FILE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        if [ -z "$PERM_LINES" ]; then
-            echo "    ⚠️  权限文件为空，跳过 Android 权限添加"
-        else
-            # 遍历每一行权限（每个 <uses-permission ... /> 标签）
-            while IFS= read -r perm_line; do
-                # 提取权限名称（用于检查是否已存在）
-                # 匹配 android:name="xxx" 中的 xxx
-                if [[ "$perm_line" =~ android:name=\"([^\"]+)\" ]]; then
-                    perm_name="${BASH_REMATCH[1]}"
-                else
-                    echo "    ⚠️  无法解析权限行: $perm_line，跳过"
-                    continue
-                fi
-                
-                # 检查该权限是否已存在（通过 android:name 匹配）
-                if grep -q "android:name=\"$perm_name\"" "$ANDROID_MANIFEST"; then
-                    echo "    ✅ 权限 $perm_name 已存在"
-                else
-                    # 在 </manifest> 前插入该权限
-                    insert_before "$ANDROID_MANIFEST" "</manifest>" "$perm_line"
-                    echo "    ➕ 添加权限 $perm_name"
-                fi
-            done <<< "$PERM_LINES"
-        fi
-    else
-        echo "    ⚠️  未找到权限配置文件，请确保 platform_config/android_permissions.txt 存在"
-    fi
-
-    # 添加 usesCleartextTraffic（允许明文流量，用于 HTTP 服务）
-    if ! grep -q 'android:usesCleartextTraffic="true"' "$ANDROID_MANIFEST"; then
-        sed -i.bak 's|<application|<application android:usesCleartextTraffic="true"|' "$ANDROID_MANIFEST"
-        rm -f "${ANDROID_MANIFEST}.bak"
-        echo "    ✅ usesCleartextTraffic 已启用"
-    else
-        echo "    ✅ usesCleartextTraffic 已存在"
-    fi
-
-    # 添加 tools 命名空间（如果缺失）
-    if ! grep -q 'xmlns:tools="http://schemas.android.com/tools"' "$ANDROID_MANIFEST"; then
-        sed -i.bak 's|<manifest |<manifest xmlns:tools="http://schemas.android.com/tools" |' "$ANDROID_MANIFEST"
-        rm -f "${ANDROID_MANIFEST}.bak"
-        echo "    ✅ tools namespace 已添加"
-    else
-        echo "    ✅ tools namespace 已存在"
-    fi
-fi
-
-# ---------- macOS 配置 ----------
-echo "  → 配置 macOS entitlements..."
-
-for ENTITLEMENTS in "macos/Runner/DebugProfile.entitlements" "macos/Runner/Release.entitlements"; do
-    if check_file "$ENTITLEMENTS"; then
-        declare -A ENT_KEYS=(
-            ["com.apple.security.device.bluetooth"]="true"
-            ["com.apple.security.network.server"]="true"
-            ["com.apple.security.network.client"]="true"
-        )
-
-        for key in "${!ENT_KEYS[@]}"; do
-            if grep -q "<key>$key</key>" "$ENTITLEMENTS"; then
-                echo "    ✅ $key 已存在"
-            else
-                insert_before "$ENTITLEMENTS" "</dict>" "    <key>$key</key>\n    <${ENT_KEYS[$key]}/>"
-                echo "    ➕ 添加 entitlements: $key"
-            fi
-        done
-    fi
-done
-
-# 配置 macOS Info.plist 蓝牙使用说明
-INFO_PLIST="macos/Runner/Info.plist"
-if check_file "$INFO_PLIST"; then
-    echo "  → 配置 macOS Info.plist 蓝牙说明..."
-
-    if ! grep -q 'NSBluetoothAlwaysUsageDescription' "$INFO_PLIST"; then
-        insert_before "$INFO_PLIST" "</dict>" "    <key>NSBluetoothAlwaysUsageDescription</key>\n    <string>此应用需要蓝牙权限以连接标签打印机</string>\n    <key>NSBluetoothPeripheralUsageDescription</key>\n    <string>此应用需要蓝牙权限以连接标签打印机</string>"
-        echo "    ✅ 蓝牙使用说明已添加"
-    else
-        echo "    ✅ 蓝牙使用说明已存在"
-    fi
-fi
-
-echo "✅ 所有平台配置完成"
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+    tools:targetApi="s" />
