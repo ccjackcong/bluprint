@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';  
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
@@ -138,6 +138,13 @@ class HttpPrintServer {
   /// 清空任务历史
   void clearTasks() {
     tasks.clear();
+  }
+
+  /// 添加任务到历史（供 API 拉取打印路径使用）
+  void addTask(PrintTask task) {
+    tasks.insert(0, task);
+    if (tasks.length > 100) tasks.removeLast();
+    _taskController.add(task);
   }
 
   void dispose() {
