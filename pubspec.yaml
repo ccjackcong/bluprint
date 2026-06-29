@@ -1,24 +1,71 @@
-name: sanjoyapp_print
-description: 三joy打印中转App - 接收Web端打印数据，通过BLE发送到标签打印机
-publish_to: 'none'
-version: 1.0.0+1
+name: Build SanJoyApp
 
-environment:
-  sdk: '>=3.1.0 <4.0.0'
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_blue_plus: ^1.32.0
-  shelf: ^1.4.1
-  shelf_router: ^1.1.4
-  shared_preferences: ^2.2.2
-  cupertino_icons: ^1.0.6
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.1
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: /opt/hostedtoolcache/flutter
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock') }}
 
-flutter:
-  uses-material-design: true
+      - name: Ensure Android platform
+        run: flutter create --platforms=android . 2>/dev/null || true
+
+      - name: Set up permissions
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh android
+
+      - run: flutter pub get
+      - run: flutter analyze || true
+      - run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: /opt/hostedtoolcache/flutter
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock') }}
+
+      - name: Ensure macOS platform
+        run: flutter create --platforms=macos . 2>/dev/null || true
+
+      - name: Set up permissions
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh macos
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Upload macOS App
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: build/macos/Build/Products/Release/*.app
