@@ -269,7 +269,7 @@ class BleService extends ChangeNotifier {
     if (_savedDeviceId == null) return;
     _logMessage('尝试自动连接已保存的打印机...');
     try {
-      final devices = await FlutterBluePlus.systemDevices([_savedDeviceId!]);
+      final devices = await FlutterBluePlus.systemDevices([Guid(_savedDeviceId!)]);
       if (devices.isNotEmpty) {
         await connect(devices.first);
       } else {
