@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../services/ble_service.dart';
 import '../services/http_server.dart';
+import '../services/api_service.dart';
 
 /// 设置页面 — BLE 扫描/选择打印机、HTTP 服务端口配置
 class SettingsPage extends StatefulWidget {
@@ -15,9 +16,13 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final BleService _ble = BleService.instance;
   final HttpPrintServer _server = HttpPrintServer.instance;
+  final ApiService _api = ApiService.instance;
   final TextEditingController _portCtrl = TextEditingController();
   final TextEditingController _svcUuidCtrl = TextEditingController();
   final TextEditingController _writeUuidCtrl = TextEditingController();
+  final TextEditingController _apiUrlCtrl = TextEditingController();
+  final TextEditingController _apiDeviceIdCtrl = TextEditingController();
+  final TextEditingController _apiStoreIdCtrl = TextEditingController();
   bool _scanning = false;
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
@@ -28,7 +33,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _portCtrl.text = _server.port.toString();
     _svcUuidCtrl.text = _ble.serviceUuid;
     _writeUuidCtrl.text = _ble.writeCharUuid;
+    _apiUrlCtrl.text = _api.baseUrl;
+    _apiDeviceIdCtrl.text = _api.deviceId;
+    _apiStoreIdCtrl.text = _api.storeId;
     _ble.addListener(_onBleChanged);
+    _api.addListener(_onApiChanged);
 
     _adapterSub = FlutterBluePlus.adapterState.listen((state) {
       if (mounted) {
@@ -40,11 +49,19 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _ble.removeListener(_onBleChanged);
+    _api.removeListener(_onApiChanged);
     _adapterSub?.cancel();
     _portCtrl.dispose();
     _svcUuidCtrl.dispose();
     _writeUuidCtrl.dispose();
+    _apiUrlCtrl.dispose();
+    _apiDeviceIdCtrl.dispose();
+    _apiStoreIdCtrl.dispose();
     super.dispose();
+  }
+
+  void _onApiChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onBleChanged() {
@@ -84,6 +101,11 @@ class _SettingsPageState extends State<SettingsPage> {
           // ── HTTP 端口 ──
           _buildSectionTitle('HTTP 打印服务'),
           _buildHttpConfig(),
+          const SizedBox(height: 16),
+
+          // ── 服务器 API 配置（BLE 打印中转） ──
+          _buildSectionTitle('三joy 系统 API 配置'),
+          _buildApiConfig(),
           const SizedBox(height: 32),
         ],
       ),
@@ -351,6 +373,96 @@ class _SettingsPageState extends State<SettingsPage> {
                     child: const Text('停止'),
                     style: TextButton.styleFrom(foregroundColor: Colors.red),
                   ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApiConfig() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            TextField(
+              controller: _apiUrlCtrl,
+              decoration: const InputDecoration(
+                labelText: '服务器地址',
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: '如 https://sanjoy.example.com',
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _apiDeviceIdCtrl,
+              decoration: const InputDecoration(
+                labelText: '设备 ID',
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: '在系统 IoT 管理中注册的 BLE 打印机 ID',
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _apiStoreIdCtrl,
+              decoration: const InputDecoration(
+                labelText: '门店 ID',
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: '用于拉取该门店的待打印任务',
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  Icons.circle,
+                  size: 10,
+                  color: _api.isConfigured ? Colors.green : Colors.grey,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _api.isConfigured
+                        ? (_api.autoPolling
+                            ? '已配置 · 自动轮询中 (心跳60s/拉取10s)'
+                            : '已配置 · 轮询未启动')
+                        : '未配置',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonal(
+                  onPressed: () async {
+                    await _api.saveConfig(
+                      baseUrl: _apiUrlCtrl.text.trim(),
+                      deviceId: _apiDeviceIdCtrl.text.trim(),
+                      storeId: _apiStoreIdCtrl.text.trim(),
+                    );
+                    // saveConfig 内部已调用 startAutoPoll，再手动绑定一次确认即时心跳
+                    final ok = await _api.bindDevice();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(ok
+                              ? '✅ 配置已保存，设备已绑定，自动轮询已启动'
+                              : '⚠️ 配置已保存，但绑定失败: ${_api.lastError ?? "未知"}'),
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: ok ? Colors.green : Colors.orange,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('保存并绑定'),
+                ),
               ],
             ),
           ],
