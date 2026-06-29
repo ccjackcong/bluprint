@@ -270,7 +270,7 @@ class BleService extends ChangeNotifier {
     _logMessage('已断开连接');
   }
 
-  // ── 发送打印数据（核心方法） ──
+  // ── 发送打印数据（核心方法，GS v 0 失败自动回退 ESC *）──
   Future<PrintTask> sendPrintData(PrintTask task) async {
     if (_state != BleState.connected || _writeChar == null || _device == null) {
       task.status = PrintTaskStatus.failed;
@@ -282,64 +282,84 @@ class BleService extends ChangeNotifier {
 
     _setState(BleState.printing);
     task.status = PrintTaskStatus.printing;
-    _logMessage('开始打印...');
+    _logMessage('开始打印 (GS v 0)...');
     notifyListeners();
 
     try {
-      final Uint8List bytes = base64Decode(task.data);
-      final int mtu = _device!.mtuNow;
-      final int chunkSize = mtu - 3; // ATT 头部占用 3 字节
-      _logMessage('数据大小: ${bytes.length} 字节, MTU: $mtu, 分包大小: $chunkSize');
-
-      // 发送 ESC @ 初始化打印机（在数据已由后端包含时跳过重复发送）
-      // 后端 iot_utils.py 已在数据头部添加了 ESC @，这里作为 double-safety
-      bool useWriteWithoutResponse = false;
-
-      for (int copy = 0; copy < task.copies; copy++) {
-        int offset = 0;
-        while (offset < bytes.length) {
-          final int end = (offset + chunkSize > bytes.length)
-              ? bytes.length
-              : offset + chunkSize;
-          final Uint8List chunk = bytes.sublist(offset, end);
-
-          try {
-            if (useWriteWithoutResponse) {
-              await _writeChar!.write(chunk, withoutResponse: true);
-            } else {
-              await _writeChar!.write(chunk, withoutResponse: false)
-                  .timeout(const Duration(milliseconds: 600));
-            }
-          } catch (e) {
-            // 写入超时或失败 → 切到 withoutResponse 模式重试
-            if (!useWriteWithoutResponse) {
-              _logMessage('写入回应超时，切换到无回应写入模式...');
-              useWriteWithoutResponse = true;
-              await _writeChar!.write(chunk, withoutResponse: true);
-            } else {
-              rethrow;
-            }
-          }
-
-          offset = end;
-
-          // 延迟避免蓝牙缓冲区溢出（精臣 B3S 需要较长的分包间隔）
-          await Future.delayed(const Duration(milliseconds: 30));
-        }
-      }
-
+      await _doSendData(task.data, task.copies);
+      // GS v 0 成功
       task.status = PrintTaskStatus.completed;
       task.completedAt = DateTime.now();
-      _logMessage('打印完成 ✓ (${bytes.length} 字节 × ${task.copies} 份)');
+      _logMessage('打印完成 ✓ (GS v 0)');
     } catch (e) {
-      task.status = PrintTaskStatus.failed;
-      task.error = e.toString();
-      task.completedAt = DateTime.now();
-      _logMessage('打印失败: $e');
+      // GS v 0 失败 → 尝试 ESC * 回退
+      if (task.fallbackData != null && task.fallbackData!.isNotEmpty) {
+        _logMessage('⚠ GS v 0 打印失败: $e，尝试 ESC * 回退...');
+        try {
+          await _doSendData(task.fallbackData!, task.copies);
+          task.status = PrintTaskStatus.completed;
+          task.usedFallback = true;
+          task.completedAt = DateTime.now();
+          _logMessage('✅ ESC * 回退打印成功 ✓');
+        } catch (e2) {
+          task.status = PrintTaskStatus.failed;
+          task.error = 'GS v 0: $e  |  ESC *: $e2';
+          task.completedAt = DateTime.now();
+          _logMessage('打印失败 (两套指令均失败): $e2');
+        }
+      } else {
+        task.status = PrintTaskStatus.failed;
+        task.error = e.toString();
+        task.completedAt = DateTime.now();
+        _logMessage('打印失败: $e');
+      }
     }
 
     _setState(BleState.connected);
     return task;
+  }
+
+  /// BLE 分包发送逻辑
+  Future<void> _doSendData(String base64Data, int copies) async {
+    final Uint8List bytes = base64Decode(base64Data);
+    final int mtu = _device!.mtuNow;
+    final int chunkSize = mtu - 3; // ATT 头部占用 3 字节
+    _logMessage('数据大小: ${bytes.length} 字节, MTU: $mtu, 分包大小: $chunkSize');
+
+    bool useWriteWithoutResponse = false;
+
+    for (int copy = 0; copy < copies; copy++) {
+      int offset = 0;
+      while (offset < bytes.length) {
+        final int end = (offset + chunkSize > bytes.length)
+            ? bytes.length
+            : offset + chunkSize;
+        final Uint8List chunk = bytes.sublist(offset, end);
+
+        try {
+          if (useWriteWithoutResponse) {
+            await _writeChar!.write(chunk, withoutResponse: true);
+          } else {
+            await _writeChar!.write(chunk, withoutResponse: false)
+                .timeout(const Duration(milliseconds: 600));
+          }
+        } catch (e) {
+          // 写入超时或失败 → 切到 withoutResponse 模式重试
+          if (!useWriteWithoutResponse) {
+            _logMessage('写入回应超时，切换到无回应写入模式...');
+            useWriteWithoutResponse = true;
+            await _writeChar!.write(chunk, withoutResponse: true);
+          } else {
+            rethrow;
+          }
+        }
+
+        offset = end;
+
+        // 延迟避免蓝牙缓冲区溢出（精臣 B3S 需要较长的分包间隔）
+        await Future.delayed(const Duration(milliseconds: 30));
+      }
+    }
   }
 
   // ── 内部方法 ──

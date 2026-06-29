@@ -434,15 +434,16 @@ class _PrintPageState extends State<PrintPage> {
 
       for (final job in jobs) {
         // 渲染标签
-        final escposBase64 = await _api.renderLabel(job.productData);
-        if (escposBase64 == null) {
+        final labelData = await _api.renderLabel(job.productData);
+        if (labelData == null) {
           failCount++;
           continue;
         }
 
-        // 创建打印任务
+        // 创建打印任务（含 ESC * 回退数据）
         final task = PrintTask(
-          data: escposBase64,
+          data: labelData['escpos_data'] ?? '',
+          fallbackData: labelData['esc_star_data'],
           copies: job.copies,
         );
 

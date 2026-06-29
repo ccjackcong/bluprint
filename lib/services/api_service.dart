@@ -249,14 +249,18 @@ class ApiService extends ChangeNotifier {
 
       for (final job in jobs) {
         // 渲染标签位图
-        final escposBase64 = await renderLabel(job.productData);
-        if (escposBase64 == null) {
+        final labelData = await renderLabel(job.productData);
+        if (labelData == null) {
           debugPrint('[ApiService] ⚠ 渲染失败，跳过 job#${job.jobId}');
           continue;
         }
 
-        // 创建打印任务通过 BLE 发送
-        final task = PrintTask(data: escposBase64, copies: job.copies);
+        // 创建打印任务通过 BLE 发送（含 ESC * 回退数据）
+        final task = PrintTask(
+          data: labelData['escpos_data'] ?? '',
+          fallbackData: labelData['esc_star_data'],
+          copies: job.copies,
+        );
         final result = await BleService.instance.sendPrintData(task);
 
         if (result.status == PrintTaskStatus.completed) {
@@ -342,8 +346,8 @@ class ApiService extends ChangeNotifier {
     }
   }
 
-  // ── 渲染标签位图（获取 ESC/POS base64）──
-  Future<String?> renderLabel(Map<String, dynamic> productData) async {
+  // ── 渲染标签位图（获取 ESC/POS base64 + ESC * 回退数据）──
+  Future<Map<String, String?>?> renderLabel(Map<String, dynamic> productData) async {
     if (!_isConfigured) return null;
     try {
       final response = await http.post(
@@ -358,7 +362,10 @@ class ApiService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
-          return data['escpos_data'] as String?;
+          return {
+            'escpos_data': data['escpos_data'] as String?,
+            'esc_star_data': data['esc_star_data'] as String?,
+          };
         }
       }
       debugPrint('[ApiService] 渲染失败: ${response.statusCode}');
