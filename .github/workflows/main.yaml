@@ -1,0 +1,71 @@
+name: Build SanJoyApp
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: /opt/hostedtoolcache/flutter
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock') }}
+
+      - name: Ensure Android platform
+        run: flutter create --platforms=android . 2>/dev/null || true
+
+      - name: Set up permissions
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh android
+
+      - run: flutter pub get
+      - run: flutter analyze || true
+      - run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: /opt/hostedtoolcache/flutter
+          key: ${{ runner.os }}-flutter-${{ hashFiles('pubspec.lock') }}
+
+      - name: Ensure macOS platform
+        run: flutter create --platforms=macos . 2>/dev/null || true
+
+      - name: Set up permissions
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          ./scripts/configure_platforms.sh macos
+
+      - run: flutter pub get
+      - run: flutter build macos --release
+
+      - name: Upload macOS App
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: build/macos/Build/Products/Release/*.app
