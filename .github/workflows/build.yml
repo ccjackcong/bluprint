@@ -40,6 +40,9 @@ jobs:
       - name: ♻️ 恢复 pubspec.yaml
         run: mv pubspec.yaml.bak pubspec.yaml
 
+      - name: 🧹 清除过期 pubspec.lock
+        run: rm -f pubspec.lock
+
       - name: ⚙️ 配置平台权限
         run: |
           chmod +x scripts/configure_platforms.sh
