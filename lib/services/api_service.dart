@@ -56,7 +56,7 @@ class ApiService extends ChangeNotifier {
     _deviceId = prefs.getString('api_device_id') ?? '';
     _storeId = prefs.getString('api_store_id') ?? '';
     _deviceKey = prefs.getString('api_device_key') ?? '';
-    _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty;
+    _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
 
     // 已配置则自动启动轮询
     if (_isConfigured) {
@@ -76,7 +76,7 @@ class ApiService extends ChangeNotifier {
     _deviceId = deviceId;
     _storeId = storeId;
     _deviceKey = deviceKey;
-    _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty;
+    _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
     await prefs.setString('api_base_url', _baseUrl);
     await prefs.setString('api_device_id', _deviceId);
     await prefs.setString('api_store_id', _storeId);
