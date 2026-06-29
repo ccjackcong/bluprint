@@ -107,7 +107,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
 
           // ── 服务器 API 配置（BLE 打印中转） ──
-          _buildSectionTitle('三joy 系统 API 配置'),
+          _buildSectionTitle('SANJOY 系统 API 配置'),
           _buildApiConfig(),
           const SizedBox(height: 32),
         ],
