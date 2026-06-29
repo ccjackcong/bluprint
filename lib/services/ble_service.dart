@@ -144,7 +144,17 @@ class BleService extends ChangeNotifier {
 
     try {
       await device.connect(timeout: const Duration(seconds: 15));
-      _logMessage('GATT 连接成功，正在发现服务...');
+      _logMessage('GATT 连接成功，协商 MTU...');
+
+      // 协商 MTU — 提升分包大小，避免大量小包冲垮打印机 BLE 缓冲区
+      try {
+        final int negotiatedMtu = await device.requestMtu(512);
+        _logMessage('MTU 协商完成: $negotiatedMtu');
+      } catch (e) {
+        _logMessage('MTU 协商失败 (将使用默认 23): $e');
+      }
+
+      _logMessage('正在发现服务...');
 
       final services = await device.discoverServices();
       _writeChar = null;
@@ -215,6 +225,19 @@ class BleService extends ChangeNotifier {
 
       _setState(BleState.connected);
       _logMessage('✅ 打印机已连接 ✓');
+
+      // 监听连接状态变化，打印过程中断线可及时感知
+      device.connectionState.listen((BluetoothConnectionState s) {
+        debugPrint('[BLE] 连接状态变化: $s');
+        if (s == BluetoothConnectionState.disconnected) {
+          _logMessage('⚠ 打印机连接已断开');
+          _writeChar = null;
+          _notifyChar = null;
+          if (_state != BleState.disconnected) {
+            _setState(BleState.disconnected);
+          }
+        }
+      });
 
       // 自动发现的 UUID 自动保存，下次直接使用
       await savePrinterConfig(
@@ -300,8 +323,8 @@ class BleService extends ChangeNotifier {
 
           offset = end;
 
-          // 微小延迟避免蓝牙缓冲区溢出
-          await Future.delayed(const Duration(milliseconds: 10));
+          // 延迟避免蓝牙缓冲区溢出（精臣 B3S 需要较长的分包间隔）
+          await Future.delayed(const Duration(milliseconds: 30));
         }
       }
 
