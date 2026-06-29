@@ -68,7 +68,7 @@ jobs:
 
       # ==================== macOS App ====================
       - name: 🍎 构建 macOS App
-        run: flutter build macos --release --no-codesign
+        run: flutter build macos --release
 
       - name: 📦 打包 macOS App (zip)
         run: |
