@@ -1,7 +1,5 @@
-// lib/services/http_server.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';           // ⭐ 添加这一行，提供 HttpServer 类
 import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
@@ -62,16 +60,11 @@ class HttpPrintServer {
 
         debugPrint('[HTTP] 收到打印任务: ${data.length} 字节, $copies 份');
 
-        // ⭐ 修改点：异步触发打印，并捕获异常避免影响响应
-        unawaited(
-          BleService.instance.sendPrintData(task).then((result) {
-            debugPrint('[HTTP] 打印结果: ${result.status.label}');
-          }).catchError((e, stack) {
-            debugPrint('[HTTP] 打印失败: $e\n$stack');
-          }),
-        );
+        // 触发 BLE 打印
+        BleService.instance.sendPrintData(task).then((result) {
+          debugPrint('[HTTP] 打印结果: ${result.status.label}');
+        });
 
-        // 立即返回成功（打印异步进行）
         return Response(200,
             body: jsonEncode({
               'status': 'ok',
@@ -83,8 +76,6 @@ class HttpPrintServer {
               'Access-Control-Allow-Origin': '*',
             });
       } catch (e) {
-        // ⭐ 修改点：更详细的错误日志
-        debugPrint('[HTTP] 请求处理异常: $e');
         return Response(400,
             body: jsonEncode({'error': '请求解析失败: $e'}),
             headers: {'Content-Type': 'application/json'});
@@ -94,16 +85,13 @@ class HttpPrintServer {
     // ── GET /status ── 查询打印机状态
     router.get('/status', (Request request) {
       final ble = BleService.instance;
-      // ⭐ 修改点：增加对设备信息的空安全处理
-      final deviceName = ble.device?.platformName ?? '';
-      final deviceId = ble.device?.remoteId.toString() ?? '';
       return Response.ok(
         jsonEncode({
           'http_server': 'running',
           'ble_state': ble.state.name,
           'ble_status': ble.statusText,
-          'ble_device': deviceName,
-          'ble_device_id': deviceId,
+          'ble_device': ble.device?.platformName ?? '',
+          'ble_device_id': ble.device?.remoteId.toString() ?? '',
           'task_count': tasks.length,
         }),
         headers: {
@@ -114,8 +102,7 @@ class HttpPrintServer {
     });
 
     // ── CORS 预检 ──
-    // ⭐ 修改点：使用更通用的路径匹配方式
-    router.add('OPTIONS', '/<.*>', (Request request) {
+    router.add('OPTIONS', '/<ignored|.*>', (Request request) {
       return Response(200, headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',

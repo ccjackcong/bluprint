@@ -1,8 +1,6 @@
-// lib/pages/settings_page.dart
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'dart:io' show Platform;
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../services/ble_service.dart';
 import '../services/http_server.dart';
 
@@ -20,10 +18,9 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _portCtrl = TextEditingController();
   final TextEditingController _svcUuidCtrl = TextEditingController();
   final TextEditingController _writeUuidCtrl = TextEditingController();
-
-  // ⭐ 用 BleService 的状态替代 FlutterBluePlus 的适配器状态
-  bool _isScanning = false;
-  bool _bleAvailable = true; // 默认 true，macOS/Web 会设置为模拟模式
+  bool _scanning = false;
+  StreamSubscription<BluetoothAdapterState>? _adapterSub;
+  BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
 
   @override
   void initState() {
@@ -33,13 +30,17 @@ class _SettingsPageState extends State<SettingsPage> {
     _writeUuidCtrl.text = _ble.writeCharUuid;
     _ble.addListener(_onBleChanged);
 
-    // ⭐ 检测当前平台是否支持真实蓝牙
-    _checkBleAvailability();
+    _adapterSub = FlutterBluePlus.adapterState.listen((state) {
+      if (mounted) {
+        setState(() => _adapterState = state);
+      }
+    });
   }
 
   @override
   void dispose() {
     _ble.removeListener(_onBleChanged);
+    _adapterSub?.cancel();
     _portCtrl.dispose();
     _svcUuidCtrl.dispose();
     _writeUuidCtrl.dispose();
@@ -48,44 +49,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _onBleChanged() {
     if (mounted) setState(() {});
-  }
-
-  // ⭐ 检测平台是否支持真实蓝牙
-  void _checkBleAvailability() {
-    if (kIsWeb) {
-      _bleAvailable = false;
-      return;
-    }
-    if (Platform.isMacOS) {
-      _bleAvailable = false;
-      return;
-    }
-    // Android / iOS 支持真实蓝牙
-    _bleAvailable = true;
-  }
-
-  // ⭐ 获取蓝牙适配器状态描述（从 BleService 推断）
-  String get _adapterStatusText {
-    if (!_bleAvailable) return '模拟模式（macOS/Web）';
-    final state = _ble.state;
-    switch (state) {
-      case BleState.disconnected:
-        return '蓝牙已开启（未连接）';
-      case BleState.connecting:
-        return '连接中...';
-      case BleState.connected:
-        return '已连接';
-      case BleState.scanning:
-        return '扫描中...';
-      case BleState.printing:
-        return '打印中...';
-    }
-  }
-
-  bool get _isAdapterReady {
-    if (!_bleAvailable) return true; // 模拟模式下始终可用
-    // 在真实平台上，只要不是扫描或连接中，就认为适配器就绪
-    return _ble.state != BleState.scanning && _ble.state != BleState.connecting;
   }
 
   @override
@@ -141,39 +104,16 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildAdapterStatus() {
-    final on = _bleAvailable && _ble.state != BleState.disconnected;
-    final isSimulated = !_bleAvailable;
-
+    final on = _adapterState == BluetoothAdapterState.on;
     return Card(
       child: ListTile(
         leading: Icon(
-          isSimulated
-              ? Icons.bluetooth
-              : (on ? Icons.bluetooth : Icons.bluetooth_disabled),
-          color: isSimulated
-              ? Colors.amber
-              : (on ? Colors.blue : Colors.grey),
+          on ? Icons.bluetooth : Icons.bluetooth_disabled,
+          color: on ? Colors.blue : Colors.grey,
         ),
-        title: Text(
-          isSimulated
-              ? '模拟模式（无需蓝牙）'
-              : (on ? '蓝牙已就绪' : '蓝牙未连接'),
-        ),
-        subtitle: Text(
-          isSimulated
-              ? '运行在 macOS / Web，使用模拟蓝牙服务'
-              : _adapterStatusText,
-        ),
-        trailing: isSimulated
-            ? Chip(
-                label: const Text('模拟', style: TextStyle(fontSize: 12)),
-                backgroundColor: Colors.amber.shade100,
-                padding: EdgeInsets.zero,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              )
-            : (on
-                ? const Icon(Icons.check_circle, color: Colors.green)
-                : null),
+        title: Text(on ? '蓝牙已开启' : '蓝牙未开启'),
+        subtitle: Text(on ? '可以扫描和连接设备' : '请在系统设置中开启蓝牙'),
+        trailing: on ? const Icon(Icons.check_circle, color: Colors.green) : null,
       ),
     );
   }
@@ -189,7 +129,7 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text(saved.isNotEmpty ? '设备 ID: $saved' : '未保存打印机'),
         subtitle: _ble.device != null
             ? Text('已连接: ${_ble.device!.platformName}')
-            : Text(_bleAvailable ? '请扫描并选择一台打印机' : '模拟模式下无真实设备'),
+            : const Text('请扫描并选择一台打印机'),
         trailing: saved.isNotEmpty
             ? TextButton(
                 onPressed: () {
@@ -211,61 +151,30 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: _isScanning || !_bleAvailable
+                onPressed: _ble.isScanning
                     ? null
                     : () async {
-                        setState(() => _isScanning = true);
+                        setState(() => _scanning = true);
                         await _ble.startScan();
-                        // 扫描后自动刷新
+                        // 重新读取扫描结果
                         await Future.delayed(const Duration(seconds: 10));
-                        if (mounted) setState(() => _isScanning = false);
+                        if (mounted) setState(() => _scanning = false);
                       },
-                icon: _isScanning
+                icon: _ble.isScanning
                     ? const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.bluetooth_searching),
-                label: Text(
-                  _isScanning
-                      ? '扫描中...'
-                      : (_bleAvailable
-                          ? '扫描设备'
-                          : '模拟模式下不可用'),
-                ),
+                label: Text(_ble.isScanning ? '扫描中...' : '扫描设备'),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        // ⭐ 扫描结果列表（在模拟模式下显示提示）
-        if (!_bleAvailable)
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Card(
-              color: Colors.amber.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.amber.shade700),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '当前运行在模拟模式，无需扫描物理设备。\n打印功能将使用模拟蓝牙服务。',
-                        style: TextStyle(
-                          color: Colors.amber.shade800,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        if (_bleAvailable && _ble.scanResults.isEmpty && !_isScanning)
+        // 扫描结果列表
+        if (_ble.scanResults.isEmpty && !_ble.isScanning)
           Padding(
             padding: const EdgeInsets.all(12),
             child: Text(
