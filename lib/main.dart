@@ -3,6 +3,7 @@ import 'pages/print_page.dart';
 import 'pages/settings_page.dart';
 import 'services/ble_service.dart';
 import 'services/http_server.dart';
+import 'services/api_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -10,6 +11,7 @@ void main() async {
   // 初始化服务
   BleService.instance.init();
   await HttpPrintServer.instance.start();
+  await ApiService.instance.init();
 
   runApp(const SanjoyPrintApp());
 }
@@ -20,7 +22,7 @@ class SanjoyPrintApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SanJOy打印中转',
+      title: 'SANJOY 打印中转',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
