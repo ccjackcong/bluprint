@@ -34,13 +34,20 @@ if [ -f "$ANDROID_MANIFEST" ]; then
         android:name="android.permission.BLUETOOTH_CONNECT"
         tools:targetApi="s" />'
 
-    # 在 </manifest> 前插入权限
     if grep -q '<uses-permission android:name="android.permission.BLUETOOTH"' "$ANDROID_MANIFEST"; then
-        echo "    Android 权限已存在，跳过"
-    else
-        sed -i.bak "s|</manifest>|$BLUETOOTH_PERMS\n</manifest>|" "$ANDROID_MANIFEST"
-        echo "    ✅ Android 权限已添加"
-    fi
+    echo "    Android 权限已存在，跳过"
+else
+    python3 -c "
+import re
+with open('$ANDROID_MANIFEST', 'r') as f:
+    content = f.read()
+content = content.replace('</manifest>', '''$BLUETOOTH_PERMS
+</manifest>''')
+with open('$ANDROID_MANIFEST', 'w') as f:
+    f.write(content)
+"
+    echo "    ✅ Android 权限已添加"
+fi
 
     # 添加 usesCleartextTraffic
     if ! grep -q 'android:usesCleartextTraffic' "$ANDROID_MANIFEST"; then
