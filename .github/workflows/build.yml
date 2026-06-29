@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🔧 安装 Flutter SDK
         uses: subosito/flutter-action@v2
@@ -60,7 +60,7 @@ jobs:
         run: flutter build apk --release
 
       - name: 📤 上传 Android APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: android-apk
           path: build/app/outputs/flutter-apk/app-release.apk
@@ -76,7 +76,7 @@ jobs:
           zip -r sanjoyapp_print-macos.zip sanjoyapp_print.app
 
       - name: 📤 上传 macOS App
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-app
           path: build/macos/Build/Products/Release/sanjoyapp_print-macos.zip
