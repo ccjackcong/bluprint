@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/ble_service.dart';
 import '../services/http_server.dart';
+import '../services/api_service.dart';
 import '../models/print_task.dart';
 
 /// 打印页面 — 显示连接状态、日志、打印历史
@@ -15,13 +16,17 @@ class PrintPage extends StatefulWidget {
 class _PrintPageState extends State<PrintPage> {
   final BleService _ble = BleService.instance;
   final HttpPrintServer _server = HttpPrintServer.instance;
+  final ApiService _api = ApiService.instance;
   StreamSubscription<PrintTask>? _taskSub;
   final ScrollController _scrollCtrl = ScrollController();
+  bool _fetching = false;
+  String? _fetchError;
 
   @override
   void initState() {
     super.initState();
     _ble.addListener(_onStateChanged);
+    _api.addListener(_onApiChanged);
     _taskSub = _server.taskStream.listen((task) {
       if (mounted) setState(() {});
     });
@@ -30,12 +35,17 @@ class _PrintPageState extends State<PrintPage> {
   @override
   void dispose() {
     _ble.removeListener(_onStateChanged);
+    _api.removeListener(_onApiChanged);
     _taskSub?.cancel();
     _scrollCtrl.dispose();
     super.dispose();
   }
 
   void _onStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onApiChanged() {
     if (mounted) setState(() {});
   }
 
@@ -57,9 +67,18 @@ class _PrintPageState extends State<PrintPage> {
     final tasks = _server.tasks;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SANJOYBLU打印中转'),
+        title: const Text('三joy 打印中转'),
         centerTitle: true,
         actions: [
+          if (_api.isConfigured)
+            IconButton(
+              icon: _fetching
+                  ? const SizedBox(width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.cloud_download),
+              tooltip: '从服务器拉取打印任务',
+              onPressed: _fetching ? null : _fetchAndPrint,
+            ),
           if (tasks.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep),
@@ -73,6 +92,9 @@ class _PrintPageState extends State<PrintPage> {
       ),
       body: Column(
         children: [
+          // ── API 状态 ──
+          if (_api.isConfigured)
+            _buildApiStatusBar(),
           // ── 状态卡片 ──
           _buildStatusCard(),
           const Divider(height: 1),
@@ -309,5 +331,159 @@ class _PrintPageState extends State<PrintPage> {
             : null,
       ),
     );
+  }
+
+  // ── API 服务器状态栏（增强版：在线状态 + 心跳 + 待打印 + 轮询指示）──
+  Widget _buildApiStatusBar() {
+    final connected = _api.isServerConnected;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: connected
+          ? Colors.green.withOpacity(0.08)
+          : Colors.orange.withOpacity(0.08),
+      child: Row(
+        children: [
+          Icon(
+            connected ? Icons.cloud_done : Icons.cloud_off,
+            size: 14,
+            color: connected ? Colors.green : Colors.orange,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${connected ? "已绑定" : "未连接"} · ${_api.baseUrl}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                      ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  '门店: ${_api.storeId}'
+                  '${_api.lastHeartbeat != null ? " · 心跳: ${_formatDuration(DateTime.now().difference(_api.lastHeartbeat!))}" : " · 无心跳"}'
+                  '${_api.pendingJobCount > 0 ? " · ⬇ ${_api.pendingJobCount}个待打印" : ""}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 10,
+                        color: connected
+                            ? Colors.green.shade700
+                            : Colors.orange.shade700,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          if (_api.autoPolling)
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.5),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    if (d.inSeconds < 60) return '${d.inSeconds}秒前';
+    if (d.inMinutes < 60) return '${d.inMinutes}分钟前';
+    return '${d.inHours}小时前';
+  }
+
+  // ── 从服务器拉取并打印 ──
+  Future<void> _fetchAndPrint() async {
+    if (_ble.state != BleState.connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请先在「设置」中连接蓝牙打印机'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _fetching = true;
+      _fetchError = null;
+    });
+
+    try {
+      // 1. 绑定设备（心跳）
+      await _api.bindDevice();
+
+      // 2. 拉取任务
+      final jobs = await _api.fetchPendingJobs();
+      if (jobs.isEmpty) {
+        setState(() => _fetchError = '没有待打印任务');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_api.lastError ?? '没有待打印任务'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 3. 逐个渲染和打印
+      int successCount = 0;
+      int failCount = 0;
+
+      for (final job in jobs) {
+        // 渲染标签
+        final escposBase64 = await _api.renderLabel(job.productData);
+        if (escposBase64 == null) {
+          failCount++;
+          continue;
+        }
+
+        // 创建打印任务
+        final task = PrintTask(
+          data: escposBase64,
+          copies: job.copies,
+        );
+
+        // 通过 BLE 发送
+        final result = await _ble.sendPrintData(task);
+
+        if (result.status == PrintTaskStatus.completed) {
+          // 标记完成
+          await _api.markJobComplete(job.jobId);
+          successCount++;
+          // 添加到历史
+          _server.addTask(result);
+        } else {
+          failCount++;
+        }
+      }
+
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ $successCount 完成'
+                '${failCount > 0 ? ' · ❌ $failCount 失败' : ''}'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _fetchError = '异常: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('拉取异常: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _fetching = false);
+    }
   }
 }
