@@ -57,7 +57,7 @@ class _PrintPageState extends State<PrintPage> {
     final tasks = _server.tasks;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('三joy 打印中转'),
+        title: const Text('SANJOYBLU打印中转'),
         centerTitle: true,
         actions: [
           if (tasks.isNotEmpty)
