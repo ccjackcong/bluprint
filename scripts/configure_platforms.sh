@@ -135,4 +135,29 @@ if [ -f "$INFO_PLIST" ]; then
     rm -f "${INFO_PLIST}.bak"
 fi
 
+# ========== 禁用 macOS 代码签名（CI 环境无签名证书） ==========
+XCODE_PROJ="macos/Runner.xcodeproj/project.pbxproj"
+if [ -f "$XCODE_PROJ" ]; then
+    echo "  → 禁用 macOS 代码签名..."
+    python3 << 'PYEOF'
+import re
+
+path = "macos/Runner.xcodeproj/project.pbxproj"
+with open(path, 'r') as f:
+    content = f.read()
+
+if 'CODE_SIGN_STYLE' not in content:
+    content = re.sub(
+        r'(buildSettings\s*=\s*\{)',
+        r'\1\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tCODE_SIGN_IDENTITY = "-";\n\t\t\t\tDEVELOPMENT_TEAM = "";',
+        content
+    )
+    with open(path, 'w') as f:
+        f.write(content)
+    print("    ✅ 代码签名已禁用 (Manual + 空身份)")
+else:
+    print("    ⏭️ 代码签名已配置，跳过")
+PYEOF
+fi
+
 echo "✅ 平台配置完成"

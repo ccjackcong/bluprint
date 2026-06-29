@@ -23,6 +23,9 @@ class ApiService extends ChangeNotifier {
   String _storeId = '';
   String get storeId => _storeId;
 
+  String _deviceKey = '';
+  String get deviceKey => _deviceKey;
+
   bool _isConfigured = false;
   bool get isConfigured => _isConfigured;
 
@@ -52,6 +55,7 @@ class ApiService extends ChangeNotifier {
     _baseUrl = prefs.getString('api_base_url') ?? '';
     _deviceId = prefs.getString('api_device_id') ?? '';
     _storeId = prefs.getString('api_store_id') ?? '';
+    _deviceKey = prefs.getString('api_device_key') ?? '';
     _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty;
 
     // 已配置则自动启动轮询
@@ -65,15 +69,18 @@ class ApiService extends ChangeNotifier {
     required String baseUrl,
     required String deviceId,
     required String storeId,
+    required String deviceKey,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     _baseUrl = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
     _deviceId = deviceId;
     _storeId = storeId;
+    _deviceKey = deviceKey;
     _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty;
     await prefs.setString('api_base_url', _baseUrl);
     await prefs.setString('api_device_id', _deviceId);
     await prefs.setString('api_store_id', _storeId);
+    await prefs.setString('api_device_key', _deviceKey);
 
     // 保存后自动启动轮询
     if (_isConfigured) {
@@ -188,6 +195,7 @@ class ApiService extends ChangeNotifier {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'device_id': _deviceId,
+          'device_key': _deviceKey,
           'app_version': '1.0.0',
         }),
       ).timeout(const Duration(seconds: 5));
@@ -213,7 +221,10 @@ class ApiService extends ChangeNotifier {
     }
     try {
       final uri = Uri.parse('$_baseUrl/api/iot/ble-jobs').replace(
-        queryParameters: {'store_id': _storeId},
+        queryParameters: {
+          'store_id': _storeId,
+          'device_key': _deviceKey,
+        },
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 5));
 
@@ -240,7 +251,10 @@ class ApiService extends ChangeNotifier {
       final response = await http.post(
         Uri.parse('$_baseUrl/api/iot/ble-label-render'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'product_data': productData}),
+        body: jsonEncode({
+          'product_data': productData,
+          'device_key': _deviceKey,
+        }),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -264,7 +278,10 @@ class ApiService extends ChangeNotifier {
       final response = await http.post(
         Uri.parse('$_baseUrl/api/iot/ble-job/complete'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'job_id': jobId}),
+        body: jsonEncode({
+          'job_id': jobId,
+          'device_key': _deviceKey,
+        }),
       ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {

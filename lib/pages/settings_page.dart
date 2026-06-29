@@ -23,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _apiUrlCtrl = TextEditingController();
   final TextEditingController _apiDeviceIdCtrl = TextEditingController();
   final TextEditingController _apiStoreIdCtrl = TextEditingController();
+  final TextEditingController _apiDeviceKeyCtrl = TextEditingController();
   bool _scanning = false;
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
@@ -36,6 +37,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiUrlCtrl.text = _api.baseUrl;
     _apiDeviceIdCtrl.text = _api.deviceId;
     _apiStoreIdCtrl.text = _api.storeId;
+    _apiDeviceKeyCtrl.text = _api.deviceKey;
     _ble.addListener(_onBleChanged);
     _api.addListener(_onApiChanged);
 
@@ -57,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiUrlCtrl.dispose();
     _apiDeviceIdCtrl.dispose();
     _apiStoreIdCtrl.dispose();
+    _apiDeviceKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -420,6 +423,17 @@ class _SettingsPageState extends State<SettingsPage> {
               style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
             ),
             const SizedBox(height: 10),
+            TextField(
+              controller: _apiDeviceKeyCtrl,
+              decoration: const InputDecoration(
+                labelText: '设备密钥',
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: '在系统 IoT 管理中生成的 24 位密钥',
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Icon(
@@ -446,6 +460,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       baseUrl: _apiUrlCtrl.text.trim(),
                       deviceId: _apiDeviceIdCtrl.text.trim(),
                       storeId: _apiStoreIdCtrl.text.trim(),
+                      deviceKey: _apiDeviceKeyCtrl.text.trim(),
                     );
                     // saveConfig 内部已调用 startAutoPoll，再手动绑定一次确认即时心跳
                     final ok = await _api.bindDevice();
