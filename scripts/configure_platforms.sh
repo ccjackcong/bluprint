@@ -73,6 +73,28 @@ PYEOF
     rm -f "${ANDROID_MANIFEST}.bak"
 fi
 
+# ========== 设置 App 显示名称 ==========
+echo "  → 设置 Android app label..."
+
+if [ -f "$ANDROID_MANIFEST" ]; then
+    sed -i.bak 's|android:label="[^"]*"|android:label="SANJOY"|' "$ANDROID_MANIFEST"
+    rm -f "${ANDROID_MANIFEST}.bak"
+    echo "    ✅ Android label → SANJOY"
+fi
+
+# macOS: CFBundleDisplayName → "SANJOY"
+INFO_PLIST_MAC="macos/Runner/Info.plist"
+if [ -f "$INFO_PLIST_MAC" ]; then
+    echo "  → 设置 macOS Bundle Display Name..."
+    if grep -q 'CFBundleDisplayName' "$INFO_PLIST_MAC" 2>/dev/null; then
+        sed -i.bak 's|<key>CFBundleDisplayName</key>.*<string>[^<]*</string>|<key>CFBundleDisplayName</key>\n    <string>SANJOY</string>|' "$INFO_PLIST_MAC"
+    else
+        sed -i.bak 's|</dict>|    <key>CFBundleDisplayName</key>\n    <string>SANJOY</string>\n</dict>|' "$INFO_PLIST_MAC"
+    fi
+    rm -f "${INFO_PLIST_MAC}.bak"
+    echo "    ✅ macOS Bundle Display Name → SANJOY"
+fi
+
 # ========== macOS 配置 ==========
 
 for ENTITLEMENTS in "macos/Runner/DebugProfile.entitlements" "macos/Runner/Release.entitlements"; do
