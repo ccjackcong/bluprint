@@ -50,6 +50,9 @@ class BleService extends ChangeNotifier {
   final List<_LogEntry> _log = [];
   List<_LogEntry> get log => List.unmodifiable(_log);
 
+  // ── 连接成功回调（由 ApiService 注册，连接后自动加载该打印机的 API 配置）──
+  void Function(String deviceMac)? onConnected;
+
   // ── 初始化 ──
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -219,6 +222,10 @@ class BleService extends ChangeNotifier {
         serviceUuid: _serviceUuid,
         writeCharUuid: _writeCharUuid,
       );
+
+      // 通知 API 服务加载该打印机的配置
+      onConnected?.call(device.remoteId.toString());
+
       return true;
     } catch (e) {
       _logMessage('连接失败: $e');
@@ -261,6 +268,10 @@ class BleService extends ChangeNotifier {
       final int chunkSize = mtu - 3; // ATT 头部占用 3 字节
       _logMessage('数据大小: ${bytes.length} 字节, MTU: $mtu, 分包大小: $chunkSize');
 
+      // 发送 ESC @ 初始化打印机（在数据已由后端包含时跳过重复发送）
+      // 后端 iot_utils.py 已在数据头部添加了 ESC @，这里作为 double-safety
+      bool useWriteWithoutResponse = false;
+
       for (int copy = 0; copy < task.copies; copy++) {
         int offset = 0;
         while (offset < bytes.length) {
@@ -269,7 +280,24 @@ class BleService extends ChangeNotifier {
               : offset + chunkSize;
           final Uint8List chunk = bytes.sublist(offset, end);
 
-          await _writeChar!.write(chunk, withoutResponse: false);
+          try {
+            if (useWriteWithoutResponse) {
+              await _writeChar!.write(chunk, withoutResponse: true);
+            } else {
+              await _writeChar!.write(chunk, withoutResponse: false)
+                  .timeout(const Duration(milliseconds: 600));
+            }
+          } catch (e) {
+            // 写入超时或失败 → 切到 withoutResponse 模式重试
+            if (!useWriteWithoutResponse) {
+              _logMessage('写入回应超时，切换到无回应写入模式...');
+              useWriteWithoutResponse = true;
+              await _writeChar!.write(chunk, withoutResponse: true);
+            } else {
+              rethrow;
+            }
+          }
+
           offset = end;
 
           // 微小延迟避免蓝牙缓冲区溢出

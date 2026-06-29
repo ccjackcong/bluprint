@@ -64,7 +64,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _onApiChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      // 更新文本框以反映自动加载的配置
+      if (_apiUrlCtrl.text != _api.baseUrl) _apiUrlCtrl.text = _api.baseUrl;
+      if (_apiDeviceIdCtrl.text != _api.deviceId) _apiDeviceIdCtrl.text = _api.deviceId;
+      if (_apiStoreIdCtrl.text != _api.storeId) _apiStoreIdCtrl.text = _api.storeId;
+      if (_apiDeviceKeyCtrl.text != _api.deviceKey) _apiDeviceKeyCtrl.text = _api.deviceKey;
+      setState(() {});
+    }
   }
 
   void _onBleChanged() {

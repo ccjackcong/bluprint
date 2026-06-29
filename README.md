@@ -1,4 +1,4 @@
-# BLU打印中转 App
+# SANJOY 打印中转 App
 
 > 接收企业微信自建应用 Web 端编码后的打印字节流，通过 BLE 发送到标签打印机。
 
@@ -69,7 +69,7 @@ flutter doctor
 ## 2. 克隆 & 初始化项目
 
 ```bash
-cd /path/to/*_bluprint
+cd /path/to/sanjoyapp/bluprint
 
 # 安装 Flutter 依赖
 flutter pub get
@@ -215,8 +215,8 @@ curl -X POST http://127.0.0.1:15987/print \
 # 2. 推送代码
 git init
 git add .
-git commit -m "feat: Sanjoy 打印中转 App 初始版本"
-git remote add origin https://github.com/YOUR_USERNAME/*app-bluprint.git
+git commit -m "feat: SANJOY 打印中转 App 初始版本"
+git remote add origin https://github.com/YOUR_USERNAME/sanjoyapp-bluprint.git
 git branch -M main
 git push -u origin main
 
@@ -309,14 +309,14 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 flutter build macos --release
 
 # App 位于：
-# build/macos/Build/Products/Release/*app_print.app
+# build/macos/Build/Products/Release/sanjoyapp_print.app
 ```
 
 **安装方式：**
 
 ```bash
 # 拖到 Applications 文件夹
-cp -R build/macos/Build/Products/Release/*app_print.app /Applications/
+cp -R build/macos/Build/Products/Release/sanjoyapp_print.app /Applications/
 
 # 或者直接用 Finder 拖放
 open build/macos/Build/Products/Release/
@@ -336,7 +336,7 @@ open build/macos/Build/Products/Release/
 
 ## 7. Web 端配合
 
-Web 端（*app 管理系统）通过 HTTP 与本 App 通信：
+Web 端（sanjoyapp 管理系统）通过 HTTP 与本 App 通信：
 
 ```javascript
 // 打印标签
@@ -358,7 +358,7 @@ async function printLabel(base64Data, copies = 1) {
   } catch (e) {
     console.error('连接失败:', e);
     // 提示用户检查打印中转 App 是否运行
-    alert('无法连接打印服务，请确保「Sanjoy 打印中转」App 已启动');
+    alert('无法连接打印服务，请确保「SANJOY 打印中转」App 已启动');
   }
 }
 
@@ -376,7 +376,7 @@ async function checkPrinterStatus() {
 async function safePrint(base64Data, copies) {
   const status = await checkPrinterStatus();
   if (!status.connected) {
-    alert('打印机未连接，请打开「Sanjoy 打印中转」App 连接打印机');
+    alert('打印机未连接，请打开「SANJOY 打印中转」App 连接打印机');
     return;
   }
   return printLabel(base64Data, copies);
@@ -388,7 +388,7 @@ async function safePrint(base64Data, copies) {
 ## 8. 项目结构
 
 ```
-*app_bluprint/
+bluprint/
 ├── lib/
 │   ├── main.dart                 # 入口 + 底部导航（打印/设置）
 │   ├── models/

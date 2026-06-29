@@ -49,19 +49,101 @@ class ApiService extends ChangeNotifier {
   Timer? _pollTimer;
   bool _isProcessing = false;
 
+  // ── 按 BLE MAC 索引的打印机配置存储 ──
+  Map<String, Map<String, String>> _printerConfigs = {};
+
   // ── 初始化 ──
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // 加载全局配置（向后兼容）
     _baseUrl = prefs.getString('api_base_url') ?? '';
     _deviceId = prefs.getString('api_device_id') ?? '';
     _storeId = prefs.getString('api_store_id') ?? '';
     _deviceKey = prefs.getString('api_device_key') ?? '';
+
+    // 加载按打印机存储的配置
+    await _loadPrinterConfigs();
+
+    // 如果当前有 BLE 打印机已保存，尝试加载其配置
+    final ble = BleService.instance;
+    final savedMac = ble.savedDeviceId;
+    if (savedMac.isNotEmpty && _printerConfigs.containsKey(savedMac)) {
+      await _applyPrinterConfig(savedMac);
+    }
+
     _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
+
+    // 注册 BLE 连接成功回调 → 自动加载对应打印机的 API 配置
+    ble.onConnected = (String mac) {
+      debugPrint('[ApiService] 🔗 BLE 已连接 $mac，尝试加载配置...');
+      loadConfigForPrinter(mac);
+    };
 
     // 已配置则自动启动轮询
     if (_isConfigured) {
       startAutoPoll();
     }
+    notifyListeners();
+  }
+
+  // ── 加载所有打印机的 API 配置 ──
+  Future<void> _loadPrinterConfigs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('api_configs');
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        _printerConfigs = decoded.map((k, v) =>
+            MapEntry(k, Map<String, String>.from(v as Map)));
+      } catch (e) {
+        debugPrint('[ApiService] 解析打印机配置失败: $e');
+        _printerConfigs = {};
+      }
+    }
+  }
+
+  // ── 保存所有打印机的 API 配置到 SharedPreferences ──
+  Future<void> _savePrinterConfigs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('api_configs', jsonEncode(_printerConfigs));
+  }
+
+  // ── 连接 BLE 打印机后自动加载其 API 配置 ──
+  Future<void> loadConfigForPrinter(String mac) async {
+    if (!_printerConfigs.containsKey(mac)) {
+      debugPrint('[ApiService] 打印机 $mac 无已保存的 API 配置');
+      return;
+    }
+    await _applyPrinterConfig(mac);
+  }
+
+  // ── 应用指定打印机的配置到当前会话 ──
+  Future<void> _applyPrinterConfig(String mac) async {
+    final cfg = _printerConfigs[mac];
+    if (cfg == null) return;
+
+    stopAutoPoll();
+
+    _baseUrl = cfg['base_url'] ?? '';
+    _deviceId = cfg['device_id'] ?? '';
+    _storeId = cfg['store_id'] ?? '';
+    _deviceKey = cfg['device_key'] ?? '';
+
+    // 同步全局配置
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('api_base_url', _baseUrl);
+    await prefs.setString('api_device_id', _deviceId);
+    await prefs.setString('api_store_id', _storeId);
+    await prefs.setString('api_device_key', _deviceKey);
+
+    _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
+    _lastError = null;
+
+    if (_isConfigured) {
+      startAutoPoll();
+    }
+    debugPrint('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId');
     notifyListeners();
   }
 
@@ -81,6 +163,20 @@ class ApiService extends ChangeNotifier {
     await prefs.setString('api_device_id', _deviceId);
     await prefs.setString('api_store_id', _storeId);
     await prefs.setString('api_device_key', _deviceKey);
+
+    // 同时保存到当前 BLE 打印机的配置中（按 MAC 索引）
+    final ble = BleService.instance;
+    final currentMac = ble.savedDeviceId;
+    if (currentMac.isNotEmpty) {
+      _printerConfigs[currentMac] = {
+        'base_url': _baseUrl,
+        'device_id': _deviceId,
+        'store_id': _storeId,
+        'device_key': _deviceKey,
+      };
+      await _savePrinterConfigs();
+      debugPrint('[ApiService] 💾 已将配置关联到打印机 $currentMac');
+    }
 
     // 保存后自动启动轮询
     if (_isConfigured) {
@@ -168,7 +264,9 @@ class ApiService extends ChangeNotifier {
           HttpPrintServer.instance.addTask(result);
           debugPrint('[ApiService] ✅ job#${job.jobId} 打印完成');
         } else {
-          debugPrint('[ApiService] ❌ job#${job.jobId} 打印失败: ${result.error}');
+          // 标记为失败，避免无限重试导致状态来回切换
+          await markJobFailed(job.jobId);
+          debugPrint('[ApiService] ❌ job#${job.jobId} 打印失败已标记: ${result.error}');
         }
       }
 
@@ -291,6 +389,30 @@ class ApiService extends ChangeNotifier {
       return false;
     } catch (e) {
       debugPrint('[ApiService] 标记完成失败: $e');
+      return false;
+    }
+  }
+
+  // ── 标记任务失败（避免无限重试）──
+  Future<bool> markJobFailed(int jobId) async {
+    if (!_isConfigured) return false;
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/iot/ble-job/fail'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'job_id': jobId,
+          'device_key': _deviceKey,
+        }),
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['success'] == true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('[ApiService] 标记失败出错: $e');
       return false;
     }
   }
