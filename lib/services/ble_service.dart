@@ -66,6 +66,11 @@ class BleService extends ChangeNotifier {
         _autoConnect();
       }
     });
+
+    // 如果蓝牙已开启，立即尝试自动连接（修复冷启动时不自动重连的问题）
+    if (FlutterBluePlus.adapterStateNow == BluetoothAdapterState.on && _savedDeviceId != null) {
+      _autoConnect();
+    }
   }
 
   // ── 保存打印机配置 ──
@@ -124,6 +129,7 @@ class BleService extends ChangeNotifier {
   }
 
   // ── 连接打印机 ──
+  // 已保存/手动配置的 UUID 优先；找不到时自动扫描发现
   Future<bool> connect(BluetoothDevice device) async {
     if (_state == BleState.connecting || _state == BleState.connected) {
       await disconnect();
@@ -141,13 +147,15 @@ class BleService extends ChangeNotifier {
       _writeChar = null;
       _notifyChar = null;
 
+      // ── 第 1 步：用预设 UUID 匹配 ──
+      bool foundByConfig = false;
       for (final service in services) {
         if (service.uuid.toString().toLowerCase() == _serviceUuid.toLowerCase()) {
           for (final char in service.characteristics) {
             final cu = char.uuid.toString().toLowerCase();
             if (cu == _writeCharUuid.toLowerCase()) {
               _writeChar = char;
-              _logMessage('找到写入特征值: ${char.uuid}');
+              _logMessage('找到写入特征值 (匹配预设): ${char.uuid}');
             }
             if (char.properties.notify || char.properties.indicate) {
               _notifyChar = char;
@@ -156,11 +164,13 @@ class BleService extends ChangeNotifier {
               _logMessage('找到通知特征值: ${char.uuid}');
             }
           }
+          if (_writeChar != null) foundByConfig = true;
         }
       }
 
-      if (_writeChar == null) {
-        _logMessage('未找到写入特征值 (service=$_serviceUuid, writeChar=$_writeCharUuid)');
+      // ── 第 2 步：预设没匹配到 → 自动发现 ──
+      if (!foundByConfig) {
+        _logMessage('预设 UUID 未匹配 ($_serviceUuid / $_writeCharUuid)，自动发现...');
         _logMessage('可用服务列表:');
         for (final s in services) {
           _logMessage('  Service: ${s.uuid}');
@@ -168,14 +178,47 @@ class BleService extends ChangeNotifier {
             _logMessage('    Char: ${c.uuid} (${c.properties})');
           }
         }
+
+        for (final service in services) {
+          final uuid = service.uuid.toString().toLowerCase();
+          // 跳过蓝牙标准服务 (Generic Access / Generic Attribute / Device Information)
+          if (uuid.startsWith('000018') || uuid.startsWith('00002a')) continue;
+
+          for (final char in service.characteristics) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
+              if (_writeChar == null) {
+                _writeChar = char;
+                _serviceUuid = service.uuid.toString();
+                _writeCharUuid = char.uuid.toString();
+                _logMessage('✨ 自动发现: Service=$_serviceUuid, Write=$_writeCharUuid');
+              }
+            }
+            if ((char.properties.notify || char.properties.indicate) && _notifyChar == null) {
+              _notifyChar = char;
+              await char.setNotifyValue(true);
+              char.lastValueStream.listen(_onNotify);
+              _logMessage('✨ 自动发现 Notify: ${char.uuid}');
+            }
+          }
+        }
+      }
+
+      if (_writeChar == null) {
+        _logMessage('❌ 未找到任何可写入的特征值');
         await device.disconnect();
         _setState(BleState.disconnected);
         return false;
       }
 
       _setState(BleState.connected);
-      _logMessage('打印机已连接 ✓');
-      await savePrinterConfig(deviceId: device.remoteId.toString());
+      _logMessage('✅ 打印机已连接 ✓');
+
+      // 自动发现的 UUID 自动保存，下次直接使用
+      await savePrinterConfig(
+        deviceId: device.remoteId.toString(),
+        serviceUuid: _serviceUuid,
+        writeCharUuid: _writeCharUuid,
+      );
       return true;
     } catch (e) {
       _logMessage('连接失败: $e');
@@ -269,11 +312,28 @@ class BleService extends ChangeNotifier {
     if (_savedDeviceId == null) return;
     _logMessage('尝试自动连接已保存的打印机...');
     try {
+      // 1. 先查系统已配对设备
       final devices = await FlutterBluePlus.systemDevices([Guid(_savedDeviceId!)]);
       if (devices.isNotEmpty) {
         await connect(devices.first);
+        return;
+      }
+
+      // 2. systemDevices 找不到 → 扫描匹配（BLE 热敏打印机可能不在 OS 配对列表）
+      _logMessage('系统配对设备中找不到，开始扫描匹配...');
+      await startScan(timeout: const Duration(seconds: 8));
+      // 延迟等待扫描结果
+      await Future.delayed(const Duration(seconds: 6));
+      await stopScan();
+
+      final matched = _scanResults.where(
+        (r) => r.device.remoteId.toString() == _savedDeviceId,
+      );
+      if (matched.isNotEmpty) {
+        _logMessage('扫描匹配成功，正在连接...');
+        await connect(matched.first.device);
       } else {
-        _logMessage('未找到已保存的设备，需手动连接');
+        _logMessage('扫描也未找到已保存的设备，需手动连接');
       }
     } catch (e) {
       _logMessage('自动连接失败: $e');
