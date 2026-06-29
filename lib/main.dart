@@ -20,7 +20,7 @@ class SanjoyPrintApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '三joy 打印中转',
+      title: 'SanJOy打印中转',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
