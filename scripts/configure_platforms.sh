@@ -12,42 +12,51 @@ ANDROID_MANIFEST="android/app/src/main/AndroidManifest.xml"
 if [ -f "$ANDROID_MANIFEST" ]; then
     echo "  → 配置 Android 权限..."
 
-    # 插入蓝牙权限（在 <manifest 标签内，</manifest> 之前）
-    sed -i.bak '/<uses-permission android:name="android.permission.INTERNET"\/>/d' "$ANDROID_MANIFEST" 2>/dev/null || true
+    # 检查是否已有 BLUETOOTH_SCAN（Android 12+ 版带 neverForLocation）
+    if grep -q 'neverForLocation' "$ANDROID_MANIFEST" 2>/dev/null; then
+        echo "    Android 蓝牙权限已存在，跳过"
+    else
+        echo "    ✅ 写入蓝牙权限..."
+        python3 << 'PYEOF'
+import re
 
-    BLUETOOTH_PERMS='
+path = "android/app/src/main/AndroidManifest.xml"
+
+with open(path, 'r') as f:
+    content = f.read()
+
+# 1. 删除所有可能残留的蓝牙/定位权限
+for perm in ['BLUETOOTH', 'BLUETOOTH_ADMIN', 'BLUETOOTH_SCAN', 'BLUETOOTH_CONNECT',
+             'ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION']:
+    content = re.sub(
+        r'\s*<uses-permission[^>]*' + re.escape(perm) + r'[^>]*/?>\s*',
+        '\n',
+        content
+    )
+
+# 2. 写入标准权限集
+perms = '''
     <!-- 蓝牙相关权限 -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <!-- BLE 扫描需要定位权限 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Android 12+ 声明不需要位置信息 -->
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_SCAN"
+    <!-- Android 12+ -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_CONNECT"
-        tools:targetApi="s" />'
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
+'''
 
-    if grep -q '<uses-permission android:name="android.permission.BLUETOOTH"' "$ANDROID_MANIFEST"; then
-    echo "    Android 权限已存在，跳过"
-else
-    python3 -c "
-import re
-with open('$ANDROID_MANIFEST', 'r') as f:
-    content = f.read()
-content = content.replace('</manifest>', '''$BLUETOOTH_PERMS
-</manifest>''')
-with open('$ANDROID_MANIFEST', 'w') as f:
+content = re.sub(r'\n{3,}', '\n\n', content)
+content = content.replace('</manifest>', perms + '\n</manifest>')
+
+with open(path, 'w') as f:
     f.write(content)
-"
-    echo "    ✅ Android 权限已添加"
-fi
+PYEOF
+    fi
 
     # 添加 usesCleartextTraffic
     if ! grep -q 'android:usesCleartextTraffic' "$ANDROID_MANIFEST"; then
