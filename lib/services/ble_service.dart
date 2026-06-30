@@ -574,6 +574,9 @@ class BleService extends ChangeNotifier {
         case PrinterBrand.generic:
           // 标准 ESC/POS
           _logMessage('开始打印 (GS v 0 ESC/POS)...');
+          // 发送 ESC @ 初始化命令唤醒打印机（与 nRF 测试一致）
+          await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
+          await Future.delayed(const Duration(milliseconds: 50));
           await _doSendData(task.data, task.copies);
           task.status = PrintTaskStatus.completed;
           task.completedAt = DateTime.now();
@@ -727,9 +730,9 @@ class BleService extends ChangeNotifier {
     final int chunkSize = mtu - 3; // ATT 头部占用 3 字节
     _logMessage('数据大小: ${bytes.length} 字节, MTU: $mtu, 分包大小: $chunkSize');
 
-    // 根据写入特征值的属性选择模式
-    final useWoR = _writeChar!.properties.writeWithoutResponse &&
-                   !_writeChar!.properties.write;
+    // 优先使用无应答写入：NUS/FFF2 等数据通道特征值通常同时声明
+    // Write + WriteWithoutResponse，但打印机不回 ATT 应答，应答模式必然超时
+    final useWoR = _writeChar!.properties.writeWithoutResponse;
 
     for (int copy = 0; copy < copies; copy++) {
       int offset = 0;
