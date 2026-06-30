@@ -82,6 +82,9 @@ class BleService extends ChangeNotifier {
   String _serviceUuid = '';
   String _writeCharUuid = '';
 
+  String get serviceUuid => _serviceUuid;
+  String get writeCharUuid => _writeCharUuid;
+
   // ── 按 MAC 存储的 UUID 配置（每台打印机独立）──
   Map<String, Map<String, String>> _printerUuids = {};
 
@@ -288,11 +291,11 @@ class BleService extends ChangeNotifier {
       _logMessage('🏷️ 检测到品牌: ${_brand.label}');
 
       // ── 第 1 步：用预设 UUID 匹配（按品牌优先级）──
-      bool foundByConfig = _tryMatchByPreset(services, mac);
+      bool foundByConfig = await _tryMatchByPreset(services, mac);
 
       // ── 第 2 步：用已保存的 per-MAC UUID 匹配 ──
       if (!foundByConfig) {
-        foundByConfig = _tryMatchBySavedMac(services, mac);
+        foundByConfig = await _tryMatchBySavedMac(services, mac);
       }
 
       // ── 第 3 步：自动发现（兜底）──
@@ -305,7 +308,7 @@ class BleService extends ChangeNotifier {
             _logMessage('    Char: ${c.uuid} (${c.properties})');
           }
         }
-        foundByConfig = _autoDiscoverWriteChar(services);
+        foundByConfig = await _autoDiscoverWriteChar(services);
       }
 
       if (_writeChar == null) {
@@ -349,7 +352,7 @@ class BleService extends ChangeNotifier {
   }
 
   /// 用预设 UUID 按品牌优先匹配
-  bool _tryMatchByPreset(List<BluetoothService> services, String mac) {
+  Future<bool> _tryMatchByPreset(List<BluetoothService> services, String mac) async {
     final savedCfg = _printerUuids[mac];
     // 如果该 MAC 有已保存的品牌偏好，优先使用
     final preferredBrand = savedCfg != null && savedCfg['brand']?.isNotEmpty == true
@@ -364,7 +367,7 @@ class BleService extends ChangeNotifier {
         break;
       case PrinterBrand.gprinter:
         // 佳博：优先使用 FFF2 (WNR) 通道 → 打印数据流更可靠
-        if (_tryMatchAltPreset(services,
+        if (await _tryMatchAltPreset(services,
             _KnownPrinterPresets.gprinter['alt_service']!,
             _KnownPrinterPresets.gprinter['alt_write']!,
             _KnownPrinterPresets.gprinter['alt_notify']!,
@@ -374,6 +377,8 @@ class BleService extends ChangeNotifier {
         preset = _KnownPrinterPresets.gprinter;
         break;
       case PrinterBrand.generic:
+        break;
+      case null:
         break;
     }
 
@@ -436,8 +441,8 @@ class BleService extends ChangeNotifier {
   }
 
   /// 匹配备用预设 UUID（用于佳博 FFF2 WNR 通道等）
-  bool _tryMatchAltPreset(List<BluetoothService> services,
-      String svcUuid, String writeUuid, String notifyUuid, String label) {
+  Future<bool> _tryMatchAltPreset(List<BluetoothService> services,
+      String svcUuid, String writeUuid, String notifyUuid, String label) async {
     for (final service in services) {
       final suid = service.uuid.toString().toLowerCase();
       if (suid != svcUuid.toLowerCase()) continue;
@@ -494,7 +499,7 @@ class BleService extends ChangeNotifier {
   }
 
   /// 兜底：自动发现第一个可写特征值
-  bool _autoDiscoverWriteChar(List<BluetoothService> services) {
+  Future<bool> _autoDiscoverWriteChar(List<BluetoothService> services) async {
     // 蓝牙核心标准服务（Generic Access / Device Info / Battery 等）
     // 注意: 000018F0/000018F2 是厂商自定义服务，不应跳过
     const stdServices = [
