@@ -468,7 +468,7 @@ class BleService extends ChangeNotifier {
   }
 
   /// 用该 MAC 已保存的 UUID 匹配
-  bool _tryMatchBySavedMac(List<BluetoothService> services, String mac) {
+  Future<bool> _tryMatchBySavedMac(List<BluetoothService> services, String mac) async {
     final cfg = _printerUuids[mac];
     if (cfg == null) return false;
 
