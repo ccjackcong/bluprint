@@ -1,10 +1,24 @@
+import 'dart:typed_data';
+
 /// 打印任务数据模型
 class PrintTask {
-  /// Base64编码的打印字节流 (GS v 0 主指令)
+  /// Base64编码的打印字节流 (GS v 0 主指令，ESC/POS 协议)
   final String data;
 
   /// ESC * 回退数据（GS v 0 打印失败时自动尝试）
   final String? fallbackData;
+
+  /// 原始像素位图数据（PIL "1" mode：0=黑, 1=白, 行优先, MSB first）— 供 NIIMBOT 等非 ESC/POS 协议使用
+  final Uint8List? rawPixels;
+
+  /// 位图像素宽度
+  final int? widthPx;
+
+  /// 位图像素高度
+  final int? heightPx;
+
+  /// 每行字节数
+  final int? bytesPerRow;
 
   /// 打印份数
   final int copies;
@@ -27,6 +41,10 @@ class PrintTask {
   PrintTask({
     required this.data,
     this.fallbackData,
+    this.rawPixels,
+    this.widthPx,
+    this.heightPx,
+    this.bytesPerRow,
     this.copies = 1,
     DateTime? receivedAt,
     this.status = PrintTaskStatus.pending,
@@ -35,6 +53,10 @@ class PrintTask {
   Map<String, dynamic> toJson() => {
         'data': data,
         'fallbackData': fallbackData,
+        'rawPixels': rawPixels,
+        'widthPx': widthPx,
+        'heightPx': heightPx,
+        'bytesPerRow': bytesPerRow,
         'copies': copies,
         'receivedAt': receivedAt.toIso8601String(),
         'status': status.name,

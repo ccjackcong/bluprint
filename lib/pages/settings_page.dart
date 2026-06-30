@@ -28,6 +28,9 @@ class _SettingsPageState extends State<SettingsPage> {
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
 
+  /// 已配对打印机列表展开状态
+  final Set<String> _expandedMacs = {};
+
   @override
   void initState() {
     super.initState();
@@ -65,7 +68,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _onApiChanged() {
     if (mounted) {
-      // 更新文本框以反映自动加载的配置
       if (_apiUrlCtrl.text != _api.baseUrl) _apiUrlCtrl.text = _api.baseUrl;
       if (_apiDeviceIdCtrl.text != _api.deviceId) _apiDeviceIdCtrl.text = _api.deviceId;
       if (_apiStoreIdCtrl.text != _api.storeId) _apiStoreIdCtrl.text = _api.storeId;
@@ -93,9 +95,9 @@ class _SettingsPageState extends State<SettingsPage> {
           _buildAdapterStatus(),
           const SizedBox(height: 16),
 
-          // ── 已保存的打印机 ──
-          _buildSectionTitle('已保存的打印机'),
-          _buildSavedPrinter(),
+          // ── 已配对打印机列表 ──
+          _buildSectionTitle('已配对打印机'),
+          ..._buildPairedPrinterList(),
           const SizedBox(height: 16),
 
           // ── 扫描设备 ──
@@ -150,28 +152,252 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildSavedPrinter() {
-    final saved = _ble.savedDeviceId;
-    return Card(
-      child: ListTile(
-        leading: Icon(
-          saved.isNotEmpty ? Icons.print : Icons.print_disabled,
-          color: saved.isNotEmpty ? Colors.amber : Colors.grey,
+  /// 已配对打印机列表（每台一个可展开卡片）
+  List<Widget> _buildPairedPrinterList() {
+    final macs = _ble.allPairedMacs;
+    final currentMac = _ble.savedDeviceId;
+
+    if (macs.isEmpty) {
+      return [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.print_disabled, color: Colors.grey[400], size: 32),
+                const SizedBox(width: 8),
+                Text('尚未配对任何打印机', style: TextStyle(color: Colors.grey[600])),
+              ],
+            ),
+          ),
         ),
-        title: Text(saved.isNotEmpty ? '设备 ID: $saved' : '未保存打印机'),
-        subtitle: _ble.device != null
-            ? Text('已连接: ${_ble.device!.platformName}')
-            : const Text('请扫描并选择一台打印机'),
-        trailing: saved.isNotEmpty
-            ? TextButton(
-                onPressed: () {
-                  _ble.savePrinterConfig(deviceId: '');
-                  _ble.disconnect();
-                  setState(() {});
-                },
-                child: const Text('清除'),
-              )
-            : null,
+      ];
+    }
+
+    return [
+      ...macs.map((mac) {
+        final cfg = _ble.getConfigForMac(mac);
+        if (cfg == null) return const SizedBox.shrink();
+
+        final isCurrent = mac == currentMac;
+        final brandName = cfg['brand'] as String? ?? '';
+        final svcUuid = cfg['service_uuid'] as String? ?? '';
+        final writeUuid = cfg['write_char_uuid'] as String? ?? '';
+
+        // 品牌颜色
+        Color brandColor;
+        String brandLabel;
+        switch (brandName) {
+          case 'niimbot':
+            brandColor = Colors.deepPurple;
+            brandLabel = 'NIIMBOT (精臣)';
+            break;
+          case 'gprinter':
+            brandColor = Colors.teal;
+            brandLabel = '佳博 GP';
+            break;
+          default:
+            brandColor = Colors.grey;
+            brandLabel = '通用 ESC/POS';
+        }
+
+        final isConnected = isCurrent && _ble.device != null && _ble.state != BleState.disconnected;
+        final isExpanded = _expandedMacs.contains(mac);
+
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          shape: RoundedRectangleBorder(
+            side: BorderSide(
+              color: isCurrent ? Colors.amber.shade300 : Colors.transparent,
+              width: isCurrent ? 1.5 : 0,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              // 卡片头部（点击展开/折叠）
+              InkWell(
+                onTap: () => setState(() {
+                  if (isExpanded) {
+                    _expandedMacs.remove(mac);
+                  } else {
+                    _expandedMacs.add(mac);
+                  }
+                }),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(isExpanded ? 0 : 8)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      // 连接状态指示灯
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: isConnected ? Colors.green : Colors.grey,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // 打印机信息
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.print, size: 18, color: brandColor),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    _ble.device?.platformName ?? '未知设备',
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'MAC: $mac',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11, color: Colors.grey[600]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      // 右侧标签和图标
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 品牌徽章
+                          Chip(
+                            label: Text(brandLabel, style: const TextStyle(fontSize: 10)),
+                            backgroundColor: brandColor.withOpacity(0.15),
+                            side: BorderSide(color: brandColor.withOpacity(0.3)),
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                          ),
+                          const SizedBox(height: 2),
+                          // 当前标记 / 状态文字
+                          Text(
+                            isCurrent ? (isConnected ? '● 已连接' : '○ 未连接') : '',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isConnected ? Colors.green : Colors.grey[500],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        isExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 20,
+                        color: Colors.grey,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // 展开区域：详细配对信息
+              if (isExpanded)
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // UUID 信息
+                      _buildInfoRow('Service UUID', svcUuid.isEmpty ? '(自动发现)' : svcUuid),
+                      _buildInfoRow('Write Char', writeUuid.isEmpty ? '(自动发现)' : writeUuid),
+
+                      const Divider(height: 12),
+
+                      // 操作按钮行
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: [
+                          if (!isConnected)
+                            FilledButton.tonal(
+                              onPressed: () async {
+                                // 从扫描结果找设备或直接用 MAC 重连
+                                final matched = _ble.scanResults.where(
+                                  (r) => r.device.remoteId.toString() == mac,
+                                ).toList();
+                                if (matched.isNotEmpty) {
+                                  await _ble.connect(matched.first.device);
+                                  setState(() {});
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('请先扫描并连接 $mac'), duration: Duration(seconds: 2)),
+                                  );
+                                }
+                              },
+                              style: FilledButton.styleFrom(foregroundColor: Colors.blue),
+                              icon: const Icon(Icons.bluetooth_connected, size: 14),
+                              label: const Text('连接', style: TextStyle(fontSize: 12)),
+                            )
+                          else
+                            OutlinedButton.icon(
+                              onPressed: () async { await _ble.disconnect(); setState(() {}); },
+                              icon: const Icon(Icons.bluetooth_disabled, size: 14),
+                              label: const Text('断开', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                            ),
+
+                          // 设为当前
+                          if (!isCurrent)
+                            FilledButton.tonal(
+                              onPressed: () async {
+                                await _ble.savePrinterConfig(deviceId: mac);
+                                setState(() {});
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已切换为当前打印机'), duration: Duration(seconds: 1)),
+                                );
+                              },
+                              icon: const Icon(Icons.star_border, size: 14),
+                              label: const Text('设为当前', style: TextStyle(fontSize: 12)),
+                            ),
+
+                          // 删除配对
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await _ble.deletePrinterConfig(mac);
+                              setState(() {});
+                            },
+                            icon: const Icon(Icons.delete_outline, size: 14),
+                            label: const Text('删除', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(foregroundColor: Colors.red[400]),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      }),
+    ];
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+          Expanded(child: SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+        ],
       ),
     );
   }
@@ -188,7 +414,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     : () async {
                         setState(() => _scanning = true);
                         await _ble.startScan();
-                        // 重新读取扫描结果
                         await Future.delayed(const Duration(seconds: 10));
                         if (mounted) setState(() => _scanning = false);
                       },
@@ -212,29 +437,41 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Text(
               '点击"扫描设备"查找附近的 BLE 打印机',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withOpacity(0.5),
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
                   ),
             ),
           ),
         ..._ble.scanResults.map((r) {
           final device = r.device;
           final isSaved = device.remoteId.toString() == _ble.savedDeviceId;
+          final isPaired = _ble.allPairedMacs.contains(device.remoteId.toString());
           return Card(
             margin: const EdgeInsets.symmetric(vertical: 2),
             child: ListTile(
               dense: true,
-              leading: Icon(
-                isSaved ? Icons.star : Icons.bluetooth,
-                color: isSaved ? Colors.amber : Colors.blue,
-                size: 22,
+              leading: Stack(
+                alignment: Alignment.centerRight,
+                children: [
+                  Icon(
+                    isSaved ? Icons.star : Icons.bluetooth,
+                    color: isSaved ? Colors.amber : Colors.blue,
+                    size: 22,
+                  ),
+                  if (isPaired && !isSaved)
+                    Container(
+                      margin: const EdgeInsets.only(left: 14, bottom: 10),
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Colors.orange,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                    ),
+                ],
               ),
               title: Text(
-                device.platformName.isNotEmpty
-                    ? device.platformName
-                    : '未知设备',
+                device.platformName.isNotEmpty ? device.platformName : '未知设备',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
               subtitle: Text(
@@ -271,7 +508,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 labelText: 'Service UUID',
                 border: OutlineInputBorder(),
                 isDense: true,
-                helperText: '打印机 GATT Service UUID',
+                helperText: '打印机 GATT Service UUID（留空则自动发现）',
               ),
               style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
             ),
@@ -282,7 +519,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 labelText: 'Write Characteristic UUID',
                 border: OutlineInputBorder(),
                 isDense: true,
-                helperText: '写入数据特征值 UUID',
+                helperText: '写入数据特征值 UUID（留空则自动发现）',
               ),
               style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
             ),
@@ -297,11 +534,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     writeCharUuid: _writeUuidCtrl.text.trim(),
                   );
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('UUID 配置已保存'),
-                      duration: Duration(seconds: 1),
-                    ),
+                    const SnackBar(content: Text('UUID 配置已保存'), duration: Duration(seconds: 1)),
                   );
+                  setState(() {});
                 },
                 child: const Text('保存 UUID 配置'),
               ),
@@ -340,17 +575,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() {});
                     if (_server.isRunning) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('服务已启动: http://127.0.0.1:$port'),
-                          duration: const Duration(seconds: 2),
-                        ),
+                        SnackBar(content: Text('服务已启动: http://127.0.0.1:$port'), duration: const Duration(seconds: 2)),
                       );
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('启动失败: ${_server.lastError}'),
-                          backgroundColor: Colors.red,
-                        ),
+                        SnackBar(content: Text('启动失败: ${_server.lastError}'), backgroundColor: Colors.red),
                       );
                     }
                   },
@@ -361,25 +590,16 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             Row(
               children: [
-                Icon(
-                  Icons.circle,
-                  size: 10,
-                  color: _server.isRunning ? Colors.green : Colors.grey,
-                ),
+                Icon(Icons.circle, size: 10, color: _server.isRunning ? Colors.green : Colors.grey),
                 const SizedBox(width: 6),
                 Text(
-                  _server.isRunning
-                      ? '运行中 — http://127.0.0.1:${_server.port}'
-                      : '未启动',
+                  _server.isRunning ? '运行中 — http://127.0.0.1:${_server.port}' : '未启动',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const Spacer(),
                 if (_server.isRunning)
                   TextButton(
-                    onPressed: () async {
-                      await _server.stop();
-                      setState(() {});
-                    },
+                    onPressed: () async { await _server.stop(); setState(() {}); },
                     child: const Text('停止'),
                     style: TextButton.styleFrom(foregroundColor: Colors.red),
                   ),
@@ -443,18 +663,12 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 10),
             Row(
               children: [
-                Icon(
-                  Icons.circle,
-                  size: 10,
-                  color: _api.isConfigured ? Colors.green : Colors.grey,
-                ),
+                Icon(Icons.circle, size: 10, color: _api.isConfigured ? Colors.green : Colors.grey),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     _api.isConfigured
-                        ? (_api.autoPolling
-                            ? '已配置 · 自动轮询中 (心跳60s/拉取10s)'
-                            : '已配置 · 轮询未启动')
+                        ? (_api.autoPolling ? '已配置 · 自动轮询中 (心跳60s/拉取10s)' : '已配置 · 轮询未启动')
                         : '未配置',
                     style: Theme.of(context).textTheme.bodySmall,
                     overflow: TextOverflow.ellipsis,
@@ -469,7 +683,6 @@ class _SettingsPageState extends State<SettingsPage> {
                       storeId: _apiStoreIdCtrl.text.trim(),
                       deviceKey: _apiDeviceKeyCtrl.text.trim(),
                     );
-                    // saveConfig 内部已调用 startAutoPoll，再手动绑定一次确认即时心跳
                     final ok = await _api.bindDevice();
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(

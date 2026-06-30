@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -255,10 +256,14 @@ class ApiService extends ChangeNotifier {
           continue;
         }
 
-        // 创建打印任务通过 BLE 发送（含 ESC * 回退数据）
+        // 创建打印任务（含 ESC/POS 数据 + 原始位图 + ESC * 回退数据）
         final task = PrintTask(
           data: labelData['escpos_data'] ?? '',
           fallbackData: labelData['esc_star_data'],
+          rawPixels: labelData['raw_pixels'] as Uint8List?,
+          widthPx: labelData['width_px'] as int?,
+          heightPx: labelData['height_px'] as int?,
+          bytesPerRow: labelData['bytes_per_row'] as int?,
           copies: job.copies,
         );
         final result = await BleService.instance.sendPrintData(task);
@@ -346,8 +351,8 @@ class ApiService extends ChangeNotifier {
     }
   }
 
-  // ── 渲染标签位图（获取 ESC/POS base64 + ESC * 回退数据）──
-  Future<Map<String, String?>?> renderLabel(Map<String, dynamic> productData) async {
+  // ── 渲染标签位图（获取 ESC/POS base64 + ESC * 回退数据 + 原始位图）──
+  Future<Map<String, dynamic>?> renderLabel(Map<String, dynamic> productData) async {
     if (!_isConfigured) return null;
     try {
       final response = await http.post(
@@ -362,10 +367,23 @@ class ApiService extends ChangeNotifier {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
-          return {
-            'escpos_data': data['escpos_data'] as String?,
+          final result = <String, dynamic>{
+            'escpos_data': data['escpos_data'] as String? ?? '',
             'esc_star_data': data['esc_star_data'] as String?,
           };
+
+          // 解析原始位图（供 NIIMBOT 等非 ESC/POS 协议使用）
+          final rawBitmap = data['raw_bitmap'];
+          if (rawBitmap != null && rawBitmap is Map<String, dynamic>) {
+            final pixelsB64 = rawBitmap['pixels_b64'] as String?;
+            if (pixelsB64 != null && pixelsB64.isNotEmpty) {
+              result['raw_pixels'] = base64Decode(pixelsB64);
+              result['width_px'] = rawBitmap['width'] as int?;
+              result['height_px'] = rawBitmap['height'] as int?;
+              result['bytes_per_row'] = rawBitmap['bytes_per_row'] as int?;
+            }
+          }
+          return result;
         }
       }
       debugPrint('[ApiService] 渲染失败: ${response.statusCode}');
