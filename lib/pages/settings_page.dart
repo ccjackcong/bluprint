@@ -326,7 +326,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         runSpacing: 6,
                         children: [
                           if (!isConnected)
-                            FilledButton.tonal(
+                            FilledButton.tonal.icon(
                               onPressed: () async {
                                 // 从扫描结果找设备或直接用 MAC 重连
                                 final matched = _ble.scanResults.where(
@@ -355,7 +355,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
                           // 设为当前
                           if (!isCurrent)
-                            FilledButton.tonal(
+                            FilledButton.tonal.icon(
                               onPressed: () async {
                                 await _ble.savePrinterConfig(deviceId: mac);
                                 setState(() {});
