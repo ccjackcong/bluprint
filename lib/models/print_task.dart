@@ -5,6 +5,9 @@ class PrintTask {
   /// Base64编码的打印字节流 (GS v 0 主指令，ESC/POS 协议)
   final String data;
 
+  /// 纯文本 ESC/POS 标签数据（佳博等不支持位图的小票机优先使用）
+  final String? textData;
+
   /// ESC * 回退数据（GS v 0 打印失败时自动尝试）
   final String? fallbackData;
 
@@ -40,6 +43,7 @@ class PrintTask {
 
   PrintTask({
     required this.data,
+    this.textData,
     this.fallbackData,
     this.rawPixels,
     this.widthPx,
@@ -52,6 +56,7 @@ class PrintTask {
 
   Map<String, dynamic> toJson() => {
         'data': data,
+        'textData': textData,
         'fallbackData': fallbackData,
         'rawPixels': rawPixels,
         'widthPx': widthPx,
