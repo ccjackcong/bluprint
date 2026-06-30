@@ -326,7 +326,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         runSpacing: 6,
                         children: [
                           if (!isConnected)
-                            FilledButton.tonal.icon(
+                            FilledButton.tonal(
                               onPressed: () async {
                                 // 从扫描结果找设备或直接用 MAC 重连
                                 final matched = _ble.scanResults.where(
@@ -342,8 +342,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                 }
                               },
                               style: FilledButton.styleFrom(foregroundColor: Colors.blue),
-                              icon: const Icon(Icons.bluetooth_connected, size: 14),
-                              label: const Text('连接', style: TextStyle(fontSize: 12)),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.bluetooth_connected, size: 14),
+                                  SizedBox(width: 6),
+                                  Text('连接', style: TextStyle(fontSize: 12)),
+                                ],
+                              ),
                             )
                           else
                             OutlinedButton.icon(
@@ -355,7 +361,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
                           // 设为当前
                           if (!isCurrent)
-                            FilledButton.tonal.icon(
+                            FilledButton.tonal(
                               onPressed: () async {
                                 await _ble.savePrinterConfig(deviceId: mac);
                                 setState(() {});
@@ -363,8 +369,14 @@ class _SettingsPageState extends State<SettingsPage> {
                                   const SnackBar(content: Text('已切换为当前打印机'), duration: Duration(seconds: 1)),
                                 );
                               },
-                              icon: const Icon(Icons.star_border, size: 14),
-                              label: const Text('设为当前', style: TextStyle(fontSize: 12)),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.star_border, size: 14),
+                                  SizedBox(width: 6),
+                                  Text('设为当前', style: TextStyle(fontSize: 12)),
+                                ],
+                              ),
                             ),
 
                           // 删除配对
