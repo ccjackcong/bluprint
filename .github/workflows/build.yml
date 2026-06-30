@@ -40,6 +40,9 @@ jobs:
       - name: ♻️ 恢复 pubspec.yaml
         run: mv pubspec.yaml.bak pubspec.yaml
 
+      - name: 🗑️ 删除自动生成的测试文件
+        run: rm -f test/widget_test.dart
+
       - name: 🧹 清除过期 pubspec.lock
         run: rm -f pubspec.lock
 
