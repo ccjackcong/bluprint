@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/ble_service.dart';
+import '../services/app_log.dart';
 import '../services/http_server.dart';
 import '../services/api_service.dart';
 import '../models/print_task.dart';
@@ -20,7 +21,6 @@ class _PrintPageState extends State<PrintPage> {
   StreamSubscription<PrintTask>? _taskSub;
   final ScrollController _scrollCtrl = ScrollController();
   bool _fetching = false;
-  String? _fetchError;
 
   @override
   void initState() {
@@ -121,7 +121,7 @@ class _PrintPageState extends State<PrintPage> {
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: _statusColor().withOpacity(0.4),
+                  color: _statusColor().withValues(alpha: 0.4),
                   blurRadius: 6,
                   spreadRadius: 2,
                 ),
@@ -223,7 +223,7 @@ class _PrintPageState extends State<PrintPage> {
                           color: Theme.of(context)
                               .colorScheme
                               .onSurface
-                              .withOpacity(0.3)),
+                              .withValues(alpha: 0.3)),
                       const SizedBox(height: 8),
                       Text(
                         '等待接收打印任务...',
@@ -231,7 +231,7 @@ class _PrintPageState extends State<PrintPage> {
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurface
-                                  .withOpacity(0.5),
+                                  .withValues(alpha: 0.5),
                             ),
                       ),
                       const SizedBox(height: 16),
@@ -241,7 +241,7 @@ class _PrintPageState extends State<PrintPage> {
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurface
-                                  .withOpacity(0.4),
+                                  .withValues(alpha: 0.4),
                             ),
                       ),
                       const SizedBox(height: 4),
@@ -251,7 +251,7 @@ class _PrintPageState extends State<PrintPage> {
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurface
-                                  .withOpacity(0.4),
+                                  .withValues(alpha: 0.4),
                               fontFamily: 'monospace',
                             ),
                       ),
@@ -311,7 +311,7 @@ class _PrintPageState extends State<PrintPage> {
               ? '打印完成'
               : isFailed
                   ? '打印失败'
-                  : '${task.status.label}',
+                  : task.status.label,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         subtitle: Text(
@@ -323,7 +323,7 @@ class _PrintPageState extends State<PrintPage> {
         trailing: isCompleted
             ? Text(
                 '✓',
-                style: TextStyle(
+                style: const TextStyle(
                     color: Colors.green,
                     fontWeight: FontWeight.bold,
                     fontSize: 18),
@@ -339,8 +339,8 @@ class _PrintPageState extends State<PrintPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: connected
-          ? Colors.green.withOpacity(0.08)
-          : Colors.orange.withOpacity(0.08),
+          ? Colors.green.withValues(alpha: 0.08)
+          : Colors.orange.withValues(alpha: 0.08),
       child: Row(
         children: [
           Icon(
@@ -406,7 +406,6 @@ class _PrintPageState extends State<PrintPage> {
 
     setState(() {
       _fetching = true;
-      _fetchError = null;
     });
 
     try {
@@ -416,7 +415,6 @@ class _PrintPageState extends State<PrintPage> {
       // 2. 拉取任务
       final jobs = await _api.fetchPendingJobs();
       if (jobs.isEmpty) {
-        setState(() => _fetchError = '没有待打印任务');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -433,19 +431,39 @@ class _PrintPageState extends State<PrintPage> {
       int failCount = 0;
 
       for (final job in jobs) {
-        // 渲染标签
-        final labelData = await _api.renderLabel(job.productData);
-        if (labelData == null) {
-          failCount++;
-          continue;
-        }
+        PrintTask task;
 
-        // 创建打印任务（含 ESC * 回退数据）
-        final task = PrintTask(
-          data: labelData['escpos_data'] ?? '',
-          fallbackData: labelData['esc_star_data'],
-          copies: job.copies,
-        );
+        if (job.printData.isNotEmpty) {
+          // 纯桥接主路径：后端已预渲染 ESC/POS 字节流（base64），直接发送
+          // 与自动轮询 _autoFetchAndPrint 保持一致；旧 HTTP 渲染路径在
+          // summary 任务上返回空，会直接 failCount++ 导致「0成功1失败」
+          task = PrintTask(
+            data: '',
+            textData: job.printData,
+            copies: job.copies,
+          );
+          AppLog.instance.d('UI',
+              '手动拉取 job#${job.jobId} 走桥接直发 (printData ${job.printData.length} 字符)');
+        } else {
+          // 兼容旧后端：无预渲染数据时回退 HTTP 渲染
+          final labelData = await _api.renderLabel(job.productData);
+          if (labelData == null) {
+            failCount++;
+            final failed = PrintTask(data: '', copies: job.copies)
+              ..status = PrintTaskStatus.failed
+              ..error =
+                  '渲染失败（无桥接数据且 HTTP 渲染返回空）job#${job.jobId}';
+            _server.addTask(failed);
+            AppLog.instance.e('UI', failed.error!);
+            continue;
+          }
+          task = PrintTask(
+            data: labelData['escpos_data'] ?? '',
+            fallbackData: labelData['esc_star_data'],
+            copies: job.copies,
+          );
+          AppLog.instance.d('UI', '手动拉取 job#${job.jobId} 走 HTTP 渲染');
+        }
 
         // 通过 BLE 发送
         final result = await _ble.sendPrintData(task);
@@ -456,11 +474,17 @@ class _PrintPageState extends State<PrintPage> {
           successCount++;
           // 添加到历史
           _server.addTask(result);
+          AppLog.instance.i('UI', '手动拉取 job#${job.jobId} 打印完成');
         } else {
           failCount++;
+          // 关键：失败任务也加入历史，UI「打印记录」才能显示 result.error
+          _server.addTask(result);
+          AppLog.instance.e('UI',
+              '手动拉取 job#${job.jobId} 打印失败: ${result.error}');
         }
       }
 
+      AppLog.instance.i('UI', '手动拉取结束: $successCount 成功 / $failCount 失败');
       if (mounted) {
         setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
@@ -473,7 +497,6 @@ class _PrintPageState extends State<PrintPage> {
         );
       }
     } catch (e) {
-      setState(() => _fetchError = '异常: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
