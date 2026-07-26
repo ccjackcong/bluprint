@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/print_task.dart';
+import 'app_log.dart';
 
 /// BLE 连接状态
 enum BleState {
@@ -735,9 +736,19 @@ class BleService extends ChangeNotifier {
 
   /// BLE 分包发送 ESC/POS 数据
   Future<void> _doSendData(String base64Data, int copies) async {
-    final Uint8List bytes = base64Decode(base64Data);
+    // 防御：清理可能混入的空白 / 换行（某些 base64 源会带），否则 base64Decode 抛 FormatException
+    final String clean = base64Data.replaceAll(RegExp(r'\s+'), '');
+    final Uint8List bytes;
+    try {
+      bytes = base64Decode(clean);
+    } catch (e) {
+      final msg = 'ESC/POS 数据 base64 解码失败: $e';
+      _logMessage('❌ $msg');
+      rethrow;
+    }
+    // 防御：MTU 协商异常（返回 0 或过小）时兜底 20 字节，避免 chunkSize<=0 导致 sublist 越界 RangeError
     final int mtu = _device!.mtuNow;
-    final int chunkSize = mtu - 3; // ATT 头部占用 3 字节
+    final int chunkSize = (mtu > 3 ? mtu - 3 : 20).clamp(20, 512);
     _logMessage('数据大小: ${bytes.length} 字节, MTU: $mtu, 分包大小: $chunkSize');
 
     // 优先使用无应答写入：NUS/FFF2 等数据通道特征值通常同时声明
@@ -819,6 +830,8 @@ class BleService extends ChangeNotifier {
   void _logMessage(String msg) {
     _log.insert(0, LogEntry(DateTime.now(), msg));
     if (_log.length > 200) _log.removeLast(); // 保留最近 200 条
+    // 同步汇聚到全局诊断日志，便于在「日志」页面 / 导出 txt 查看
+    AppLog.instance.d('BLE', msg);
     notifyListeners();
   }
 

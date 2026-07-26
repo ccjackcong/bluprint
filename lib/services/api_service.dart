@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/print_task.dart';
 import 'ble_service.dart';
 import 'http_server.dart';
+import 'app_log.dart';
 
 /// 服务器 API 客户端 — BluPrint 拉取 BLE 打印任务
 /// 支持自动心跳（保持设备在线）+ 自动轮询（拉取并打印待处理任务）
@@ -52,6 +53,13 @@ class ApiService extends ChangeNotifier {
   // ── 按 BLE MAC 索引的打印机配置存储 ──
   Map<String, Map<String, String>> _printerConfigs = {};
 
+  /// 统一日志：控制台 + 全局诊断日志（AppLog）。
+  /// 仅转发以 [ApiService] 为前缀的 debugPrint，保持现有控制台输出不变。
+  void _log(String m) {
+    debugPrint(m);
+    AppLog.instance.d('API', m.replaceFirst(RegExp(r'^\[ApiService\]\s*'), ''));
+  }
+
   // ── 初始化 ──
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -76,7 +84,7 @@ class ApiService extends ChangeNotifier {
 
     // 注册 BLE 连接成功回调 → 自动加载对应打印机的 API 配置
     ble.onConnected = (String mac) {
-      debugPrint('[ApiService] 🔗 BLE 已连接 $mac，尝试加载配置...');
+      _log('[ApiService] 🔗 BLE 已连接 $mac，尝试加载配置...');
       loadConfigForPrinter(mac);
     };
 
@@ -97,7 +105,7 @@ class ApiService extends ChangeNotifier {
         _printerConfigs = decoded.map((k, v) =>
             MapEntry(k, Map<String, String>.from(v as Map)));
       } catch (e) {
-        debugPrint('[ApiService] 解析打印机配置失败: $e');
+        _log('[ApiService] 解析打印机配置失败: $e');
         _printerConfigs = {};
       }
     }
@@ -112,7 +120,7 @@ class ApiService extends ChangeNotifier {
   // ── 连接 BLE 打印机后自动加载其 API 配置 ──
   Future<void> loadConfigForPrinter(String mac) async {
     if (!_printerConfigs.containsKey(mac)) {
-      debugPrint('[ApiService] 打印机 $mac 无已保存的 API 配置');
+      _log('[ApiService] 打印机 $mac 无已保存的 API 配置');
       return;
     }
     await _applyPrinterConfig(mac);
@@ -143,7 +151,7 @@ class ApiService extends ChangeNotifier {
     if (_isConfigured) {
       startAutoPoll();
     }
-    debugPrint('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId');
+    _log('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId');
     notifyListeners();
   }
 
@@ -175,7 +183,7 @@ class ApiService extends ChangeNotifier {
         'device_key': _deviceKey,
       };
       await _savePrinterConfigs();
-      debugPrint('[ApiService] 💾 已将配置关联到打印机 $currentMac');
+      _log('[ApiService] 💾 已将配置关联到打印机 $currentMac');
     }
 
     // 保存后自动启动轮询
@@ -189,7 +197,7 @@ class ApiService extends ChangeNotifier {
   void startAutoPoll() {
     if (!_isConfigured || _autoPolling) return;
     _autoPolling = true;
-    debugPrint('[ApiService] 🚀 启动自动轮询: $_baseUrl device=$_deviceId store=$_storeId');
+    _log('[ApiService] 🚀 启动自动轮询: $_baseUrl device=$_deviceId store=$_storeId');
 
     // 心跳定时器（每 60 秒保持在线）
     _heartbeatTimer?.cancel();
@@ -213,7 +221,7 @@ class ApiService extends ChangeNotifier {
     _pollTimer = null;
     _isServerConnected = false;
     _pendingJobCount = 0;
-    debugPrint('[ApiService] ⏹ 停止自动轮询');
+    _log('[ApiService] ⏹ 停止自动轮询');
     notifyListeners();
   }
 
@@ -248,11 +256,11 @@ class ApiService extends ChangeNotifier {
 
       // BLE 未连接：不消费任务（保留 pending 等待连接后打印），但提示原因
       if (BleService.instance.state != BleState.connected) {
-        debugPrint('[ApiService] ⚠ 有 ${jobs.length} 个待打印任务，但蓝牙打印机未连接，等待连接后自动打印');
+        _log('[ApiService] ⚠ 有 ${jobs.length} 个待打印任务，但蓝牙打印机未连接，等待连接后自动打印');
         return;
       }
 
-      debugPrint('[ApiService] 📥 自动拉取到 ${jobs.length} 个待打印任务');
+      _log('[ApiService] 📥 自动拉取到 ${jobs.length} 个待打印任务');
 
       for (final job in jobs) {
         try {
@@ -271,7 +279,7 @@ class ApiService extends ChangeNotifier {
             if (labelData == null) {
               // 渲染失败必须标记失败，否则任务永久 pending 卡死队列
               await markJobFailed(job.jobId);
-              debugPrint('[ApiService] ❌ job#${job.jobId} 渲染失败，已标记失败');
+              _log('[ApiService] ❌ job#${job.jobId} 渲染失败，已标记失败');
               continue;
             }
             task = PrintTask(
@@ -291,15 +299,15 @@ class ApiService extends ChangeNotifier {
           if (result.status == PrintTaskStatus.completed) {
             await markJobComplete(job.jobId);
             HttpPrintServer.instance.addTask(result);
-            debugPrint('[ApiService] ✅ job#${job.jobId} 打印完成');
+            _log('[ApiService] ✅ job#${job.jobId} 打印完成');
           } else {
             // 标记为失败，避免无限重试导致状态来回切换
             await markJobFailed(job.jobId);
-            debugPrint('[ApiService] ❌ job#${job.jobId} 打印失败已标记: ${result.error}');
+            _log('[ApiService] ❌ job#${job.jobId} 打印失败已标记: ${result.error}');
           }
         } catch (e) {
           // 单任务异常隔离：不让一个任务的异常阻塞整个队列
-          debugPrint('[ApiService] ❌ job#${job.jobId} 处理异常: $e');
+          _log('[ApiService] ❌ job#${job.jobId} 处理异常: $e');
           try {
             await markJobFailed(job.jobId);
           } catch (_) {}
@@ -311,7 +319,7 @@ class ApiService extends ChangeNotifier {
       _pendingJobCount = remaining.length;
       notifyListeners();
     } catch (e) {
-      debugPrint('[ApiService] 自动轮询异常: $e');
+      _log('[ApiService] 自动轮询异常: $e');
     } finally {
       _isProcessing = false;
     }
@@ -414,10 +422,10 @@ class ApiService extends ChangeNotifier {
           return result;
         }
       }
-      debugPrint('[ApiService] 渲染失败: ${response.statusCode}');
+      _log('[ApiService] 渲染失败: ${response.statusCode}');
       return null;
     } catch (e) {
-      debugPrint('[ApiService] 渲染异常: $e');
+      _log('[ApiService] 渲染异常: $e');
       return null;
     }
   }
@@ -441,7 +449,7 @@ class ApiService extends ChangeNotifier {
       }
       return false;
     } catch (e) {
-      debugPrint('[ApiService] 标记完成失败: $e');
+      _log('[ApiService] 标记完成失败: $e');
       return false;
     }
   }
@@ -465,7 +473,7 @@ class ApiService extends ChangeNotifier {
       }
       return false;
     } catch (e) {
-      debugPrint('[ApiService] 标记失败出错: $e');
+      _log('[ApiService] 标记失败出错: $e');
       return false;
     }
   }
