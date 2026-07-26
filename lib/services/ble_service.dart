@@ -574,9 +574,11 @@ class BleService extends ChangeNotifier {
         case PrinterBrand.generic:
           // 标准 ESC/POS — 优先使用纯文本标签（佳博小票机不支持 GS v 0 位图）
           final String? textData = task.textData;
+          // 关键：本机写特征可能不支持 WRITE_NO_RESPONSE，必须按实际属性决定 withoutResponse
+          final bool useWoR = _writeChar!.properties.writeWithoutResponse;
           if (textData != null && textData.isNotEmpty) {
             _logMessage('开始打印 (纯文本 ESC/POS)...');
-            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
+            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: useWoR);
             await Future.delayed(const Duration(milliseconds: 50));
             await _doSendData(textData, task.copies);
             task.status = PrintTaskStatus.completed;
@@ -585,7 +587,7 @@ class BleService extends ChangeNotifier {
           } else {
             // 无文本数据，回退到 GS v 0 位图
             _logMessage('开始打印 (GS v 0 ESC/POS)...');
-            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
+            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: useWoR);
             await Future.delayed(const Duration(milliseconds: 50));
             await _doSendData(task.data, task.copies);
             task.status = PrintTaskStatus.completed;
