@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -234,48 +233,76 @@ class ApiService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── 自动拉取并打印 ──
+  // ── 自动拉取并打印（纯桥接：后端预渲染字节流直发打印机）──
   Future<void> _autoFetchAndPrint() async {
     if (_isProcessing) return;
-    if (BleService.instance.state != BleState.connected) return; // BLE 未连接跳过
 
     _isProcessing = true;
     try {
+      // 无论蓝牙是否连接，先拉取任务刷新待打印计数（UI 可见）
       final jobs = await fetchPendingJobs();
       _pendingJobCount = jobs.length;
       notifyListeners();
 
       if (jobs.isEmpty) return;
+
+      // BLE 未连接：不消费任务（保留 pending 等待连接后打印），但提示原因
+      if (BleService.instance.state != BleState.connected) {
+        debugPrint('[ApiService] ⚠ 有 ${jobs.length} 个待打印任务，但蓝牙打印机未连接，等待连接后自动打印');
+        return;
+      }
+
       debugPrint('[ApiService] 📥 自动拉取到 ${jobs.length} 个待打印任务');
 
       for (final job in jobs) {
-        // 渲染标签位图
-        final labelData = await renderLabel(job.productData);
-        if (labelData == null) {
-          debugPrint('[ApiService] ⚠ 渲染失败，跳过 job#${job.jobId}');
-          continue;
-        }
+        try {
+          PrintTask task;
 
-        // 创建打印任务（含 ESC/POS 数据 + 原始位图 + ESC * 回退数据）
-        final task = PrintTask(
-          data: labelData['escpos_data'] ?? '',
-          fallbackData: labelData['esc_star_data'],
-          rawPixels: labelData['raw_pixels'] as Uint8List?,
-          widthPx: labelData['width_px'] as int?,
-          heightPx: labelData['height_px'] as int?,
-          bytesPerRow: labelData['bytes_per_row'] as int?,
-          copies: job.copies,
-        );
-        final result = await BleService.instance.sendPrintData(task);
+          if (job.printData.isNotEmpty) {
+            // 纯桥接主路径：后端已渲染好 ESC/POS 字节流（base64），直接发送
+            task = PrintTask(
+              data: '',
+              textData: job.printData,
+              copies: job.copies,
+            );
+          } else {
+            // 兼容旧后端：无预渲染数据时回退 HTTP 渲染
+            final labelData = await renderLabel(job.productData);
+            if (labelData == null) {
+              // 渲染失败必须标记失败，否则任务永久 pending 卡死队列
+              await markJobFailed(job.jobId);
+              debugPrint('[ApiService] ❌ job#${job.jobId} 渲染失败，已标记失败');
+              continue;
+            }
+            task = PrintTask(
+              data: labelData['escpos_data'] ?? '',
+              textData: labelData['text_data'] as String?,
+              fallbackData: labelData['esc_star_data'],
+              rawPixels: labelData['raw_pixels'] as Uint8List?,
+              widthPx: labelData['width_px'] as int?,
+              heightPx: labelData['height_px'] as int?,
+              bytesPerRow: labelData['bytes_per_row'] as int?,
+              copies: job.copies,
+            );
+          }
 
-        if (result.status == PrintTaskStatus.completed) {
-          await markJobComplete(job.jobId);
-          HttpPrintServer.instance.addTask(result);
-          debugPrint('[ApiService] ✅ job#${job.jobId} 打印完成');
-        } else {
-          // 标记为失败，避免无限重试导致状态来回切换
-          await markJobFailed(job.jobId);
-          debugPrint('[ApiService] ❌ job#${job.jobId} 打印失败已标记: ${result.error}');
+          final result = await BleService.instance.sendPrintData(task);
+
+          if (result.status == PrintTaskStatus.completed) {
+            await markJobComplete(job.jobId);
+            HttpPrintServer.instance.addTask(result);
+            debugPrint('[ApiService] ✅ job#${job.jobId} 打印完成');
+          } else {
+            // 标记为失败，避免无限重试导致状态来回切换
+            await markJobFailed(job.jobId);
+            debugPrint('[ApiService] ❌ job#${job.jobId} 打印失败已标记: ${result.error}');
+          }
+        } catch (e) {
+          // 单任务异常隔离：不让一个任务的异常阻塞整个队列
+          debugPrint('[ApiService] ❌ job#${job.jobId} 处理异常: $e');
+          try {
+            await markJobFailed(job.jobId);
+          } catch (_) {}
         }
       }
 
@@ -370,6 +397,7 @@ class ApiService extends ChangeNotifier {
           final result = <String, dynamic>{
             'escpos_data': data['escpos_data'] as String? ?? '',
             'esc_star_data': data['esc_star_data'] as String?,
+            'text_data': data['text_data'] as String?,   // 纯文本标签（佳博小票机用）
           };
 
           // 解析原始位图（供 NIIMBOT 等非 ESC/POS 协议使用）
@@ -449,6 +477,7 @@ class BlePrintJob {
   final String deviceId;
   final Map<String, dynamic> productData;
   final int copies;
+  final String printData; // 后端预渲染 ESC/POS 字节流（base64），非空时纯桥接直发
   final String? createdAt;
 
   BlePrintJob({
@@ -456,15 +485,18 @@ class BlePrintJob {
     required this.deviceId,
     required this.productData,
     required this.copies,
+    this.printData = '',
     this.createdAt,
   });
 
   factory BlePrintJob.fromJson(Map<String, dynamic> json) {
     return BlePrintJob(
-      jobId: json['job_id'] ?? 0,
+      // 兼容后端历史字段名：优先 job_id，回退 id（旧后端只返回 id）
+      jobId: json['job_id'] ?? json['id'] ?? 0,
       deviceId: json['device_id'] ?? '',
       productData: Map<String, dynamic>.from(json['product_data'] ?? {}),
       copies: json['copies'] ?? 1,
+      printData: json['print_data']?.toString() ?? '',
       createdAt: json['created_at'],
     );
   }

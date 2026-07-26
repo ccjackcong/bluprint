@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -107,8 +106,8 @@ class BleService extends ChangeNotifier {
   bool get isScanning => _isScanning;
 
   // ── 日志 ──
-  final List<_LogEntry> _log = [];
-  List<_LogEntry> get log => List.unmodifiable(_log);
+  final List<LogEntry> _log = [];
+  List<LogEntry> get log => List.unmodifiable(_log);
 
   // ── 连接成功回调（由 ApiService 注册，连接后自动加载该打印机的 API 配置）──
   void Function(String deviceMac)? onConnected;
@@ -572,15 +571,26 @@ class BleService extends ChangeNotifier {
 
         case PrinterBrand.gprinter:
         case PrinterBrand.generic:
-          // 标准 ESC/POS
-          _logMessage('开始打印 (GS v 0 ESC/POS)...');
-          // 发送 ESC @ 初始化命令唤醒打印机（与 nRF 测试一致）
-          await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
-          await Future.delayed(const Duration(milliseconds: 50));
-          await _doSendData(task.data, task.copies);
-          task.status = PrintTaskStatus.completed;
-          task.completedAt = DateTime.now();
-          _logMessage('✅ ESC/POS 打印完成 ✓');
+          // 标准 ESC/POS — 优先使用纯文本标签（佳博小票机不支持 GS v 0 位图）
+          final String? textData = task.textData;
+          if (textData != null && textData.isNotEmpty) {
+            _logMessage('开始打印 (纯文本 ESC/POS)...');
+            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
+            await Future.delayed(const Duration(milliseconds: 50));
+            await _doSendData(textData, task.copies);
+            task.status = PrintTaskStatus.completed;
+            task.completedAt = DateTime.now();
+            _logMessage('✅ 纯文本 ESC/POS 打印完成 ✓');
+          } else {
+            // 无文本数据，回退到 GS v 0 位图
+            _logMessage('开始打印 (GS v 0 ESC/POS)...');
+            await _writeChar!.write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true);
+            await Future.delayed(const Duration(milliseconds: 50));
+            await _doSendData(task.data, task.copies);
+            task.status = PrintTaskStatus.completed;
+            task.completedAt = DateTime.now();
+            _logMessage('✅ ESC/POS 打印完成 ✓');
+          }
       }
     } catch (e) {
       // NIIMBOT 或 GS v 0 失败 → 对 ESC/POS 设备尝试回退 ESC *
@@ -623,7 +633,7 @@ class BleService extends ChangeNotifier {
     int bytesPerRow,
     int copies,
   ) async {
-    _logMessage('📐 位图尺寸: ${widthPx}×${heightPx}px, 每行$bytesPerRow字节, 共${rawPixels.length}字节数据');
+    _logMessage('📐 位图尺寸: $widthPx×$heightPx px, 每行$bytesPerRow字节, 共${rawPixels.length}字节数据');
 
     for (int copy = 0; copy < copies; copy++) {
       // ── 1) 握手 ──
@@ -653,7 +663,7 @@ class BleService extends ChangeNotifier {
         (heightPx >> 8) & 0xFF, heightPx & 0xFF,  // 高度 big-endian
         (widthPx >> 8) & 0xFF,  widthPx & 0xFF,   // 宽度 big-endian
       ]);
-      _logMessage('📄 页面尺寸: ${widthPx}×${heightPx}');
+      _logMessage('📄 页面尺寸: $widthPx×$heightPx');
       await Future.delayed(const Duration(milliseconds: 30));
 
       // ── 7) 逐行发送图像数据 ──
@@ -744,7 +754,10 @@ class BleService extends ChangeNotifier {
 
         try {
           if (useWoR) {
-            await _writeChar!.write(chunk, withoutResponse: true);
+            // 无应答写入也必须加超时：BLE 栈缓冲区满/断连时 write 可能永久挂起，
+            // 否则一次卡死会阻塞整个打印队列
+            await _writeChar!.write(chunk, withoutResponse: true)
+                .timeout(const Duration(milliseconds: 1000));
           } else {
             // 先尝试带应答写入（更可靠），超时则切换无应答
             await _writeChar!.write(chunk, withoutResponse: false)
@@ -754,7 +767,8 @@ class BleService extends ChangeNotifier {
           // 写入超时 → 切换无应答模式重试当前 chunk
           if (!useWoR) {
             _logMessage('写入回应超时，切到无回应模式重试...');
-            await _writeChar!.write(chunk, withoutResponse: true);
+            await _writeChar!.write(chunk, withoutResponse: true)
+                .timeout(const Duration(milliseconds: 1000));
           } else {
             rethrow;
           }
@@ -778,9 +792,10 @@ class BleService extends ChangeNotifier {
           : offset + chunkSize;
       final chunk = bytes.sublist(offset, end);
 
-      // NIIMBOT 使用无应答写入（打印机不回复确认）
+      // NIIMBOT 使用无应答写入（打印机不回复确认）；加超时防 BLE 栈挂起
       if (_writeChar!.properties.writeWithoutResponse) {
-        await _writeChar!.write(chunk, withoutResponse: true);
+        await _writeChar!.write(chunk, withoutResponse: true)
+            .timeout(const Duration(milliseconds: 1000));
       } else {
         await _writeChar!.write(chunk, withoutResponse: false)
             .timeout(const Duration(milliseconds: 300));
@@ -802,7 +817,7 @@ class BleService extends ChangeNotifier {
   }
 
   void _logMessage(String msg) {
-    _log.insert(0, _LogEntry(DateTime.now(), msg));
+    _log.insert(0, LogEntry(DateTime.now(), msg));
     if (_log.length > 200) _log.removeLast(); // 保留最近 200 条
     notifyListeners();
   }
@@ -853,8 +868,8 @@ class BleService extends ChangeNotifier {
   }
 }
 
-class _LogEntry {
+class LogEntry {
   final DateTime time;
   final String message;
-  _LogEntry(this.time, this.message);
+  LogEntry(this.time, this.message);
 }
