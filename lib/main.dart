@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'pages/print_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/log_page.dart';
 import 'services/ble_service.dart';
 import 'services/http_server.dart';
 import 'services/api_service.dart';
@@ -57,6 +58,7 @@ class _HomePageState extends State<HomePage> {
   final List<Widget> _pages = const [
     PrintPage(),
     SettingsPage(),
+    LogPage(),
   ];
 
   @override
@@ -85,7 +87,7 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (i) => setState(() => _currentIndex = i),
-        destinations: [
+        destinations: const [
           NavigationDestination(
             icon: const Icon(Icons.print_outlined),
             selectedIcon: const Icon(Icons.print),
@@ -101,6 +103,11 @@ class _HomePageState extends State<HomePage> {
               child: const Icon(Icons.settings),
             ),
             label: '设置',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.assignment_outlined),
+            selectedIcon: const Icon(Icons.assignment),
+            label: '日志',
           ),
         ],
       ),
