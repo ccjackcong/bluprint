@@ -87,7 +87,7 @@ class _HomePageState extends State<HomePage> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (i) => setState(() => _currentIndex = i),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: const Icon(Icons.print_outlined),
             selectedIcon: const Icon(Icons.print),
