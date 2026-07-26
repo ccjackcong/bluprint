@@ -65,5 +65,5 @@ class LogRecord {
   final String module;
   final String level;
   final String msg;
-  _LogRecord(this.time, this.module, this.level, this.msg);
+  LogRecord(this.time, this.module, this.level, this.msg);
 }
