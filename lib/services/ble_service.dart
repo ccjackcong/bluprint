@@ -290,6 +290,18 @@ class BleService extends ChangeNotifier {
       _brand = _detectBrand(device, services);
       _logMessage('🏷️ 检测到品牌: ${_brand.label}');
 
+      // ── 诊断: 无论预设是否命中, 都 dump 全部服务/特征及其写属性 ──
+      _logMessage('🔬 [诊断] 全部服务与特征属性:');
+      for (final s in services) {
+        _logMessage('🔬   Service: ${s.uuid}');
+        for (final c in s.characteristics) {
+          _logMessage('🔬     Char: ${c.uuid} '
+              'write=${c.properties.write} '
+              'writeWithoutResponse=${c.properties.writeWithoutResponse} '
+              'notify=${c.properties.notify} read=${c.properties.read}');
+        }
+      }
+
       // ── 第 1 步：用预设 UUID 匹配（按品牌优先级）──
       bool foundByConfig = await _tryMatchByPreset(services, mac);
 
@@ -755,7 +767,23 @@ class BleService extends ChangeNotifier {
 
     // 优先使用无应答写入：NUS/FFF2 等数据通道特征值通常同时声明
     // Write + WriteWithoutResponse，但打印机不回 ATT 应答，应答模式必然超时
-    final useWoR = _writeChar!.properties.writeWithoutResponse;
+    // 佳博 6DAA 主通道未声明 WNR，但打印引擎只消费 WNR 数据 ——
+    // 若属性未声明 WNR，试探一次强制 WNR 是否可用；成功则全程改走 WNR。
+    bool useWoR = _writeChar!.properties.writeWithoutResponse;
+    if (!useWoR) {
+      try {
+        await _writeChar!
+            .write(Uint8List.fromList([0x1B, 0x40]), withoutResponse: true)
+            .timeout(const Duration(milliseconds: 800));
+        useWoR = true; // 强制 WNR 竟然成功 → 后续数据全走 WNR
+        _logMessage('🔬 [诊断] 属性未声明 WNR, 但强制 WNR 写入成功 → 改用 WNR 传输');
+      } catch (e) {
+        useWoR = false;
+        _logMessage('🔬 [诊断] 强制 WNR 被拒绝 → $e (维持 Write Request)');
+      }
+    } else {
+      _logMessage('🔬 [诊断] 写特征已声明 WNR, 使用 WNR 传输');
+    }
 
     for (int copy = 0; copy < copies; copy++) {
       int offset = 0;
