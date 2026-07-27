@@ -15,7 +15,11 @@ dependencies:
   shared_preferences: ^2.2.2
   http: ^1.2.0
   cupertino_icons: ^1.0.6
-  path_provider: ^2.1.0
+  # 钉到 2.0.x：2.1.x 的 path_provider_android 已迁移到 JNI(jnigen)，
+  # 会拉入 broken 的 jni 1.0.1，导致 CI Gradle 评估 ':jni' 失败
+  # (Could not find method kotlin())。2.0.x 仍是 MethodChannel，无 jni 依赖。
+  path_provider: ">=2.0.0 <2.1.0"
+  path_provider_android: ">=2.0.0 <2.1.0"
 
 dev_dependencies:
   flutter_test:
