@@ -1,0 +1,180 @@
+name: Build Flutter App
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: '构建平台 (逗号分隔: android,macos)'
+        required: false
+        default: 'android,macos'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 🔧 安装 Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: 📋 Flutter 环境检查
+        run: flutter doctor -v
+
+      # ── 重要：先备份 pubspec.yaml，flutter create 会覆盖它 ──
+      - name: 💾 备份 pubspec.yaml
+        run: cp pubspec.yaml pubspec.yaml.bak
+
+      - name: 🏗️ 生成平台目录 (android/, macos/)
+        run: flutter create --platforms=android,macos .
+
+      # ── 恢复原始 pubspec.yaml（包含 http、shelf、flutter_blue_plus 等依赖） ──
+      - name: ♻️ 恢复 pubspec.yaml
+        run: mv pubspec.yaml.bak pubspec.yaml
+
+      - name: 🗑️ 删除自动生成的测试文件
+        run: rm -f test/widget_test.dart
+
+      - name: 🧹 清除过期 pubspec.lock
+        run: rm -f pubspec.lock
+
+      - name: ⚙️ 配置平台权限
+        run: |
+          chmod +x scripts/configure_platforms.sh
+          bash scripts/configure_platforms.sh
+
+      # ── 修复 :jni 在 AGP 9 下的 kotlin() 报错 ──
+      # 根因：path_provider_android 2.1.x 经 jnigen 传递依赖 jni:1.0.1；其 android/build.gradle
+      # 仅在 agpMajor<9 时自己 apply kotlin-android，AGP>=9 完全依赖「内置 Kotlin」自动注入。
+      # 而 AGP 9 内置 Kotlin 与 jni 的老式 apply plugin: 语法冲突(dart-lang/native#3415)，
+      # 两种开关(true→Failed to apply plugin / false→Could not find method kotlin())都编不过。
+      # 唯一确定可行的修法：把 AGP 降到 8.7（jni 会自己 apply Kotlin），并连带把 Gradle 降到 8.12
+      # （AGP 8.7 的配套版本）。android.builtInKotlin=false 显式关闭内置 Kotlin，避免与 jni 自 apply 冲突。
+      - name: 🔧 降级 AGP→8.7 / Gradle→8.12（修复 :jni 的 kotlin() 报错）
+        run: |
+          python3 << 'PYEOF'
+          import re, os, glob, subprocess
+
+          AGP = "8.7.0"
+          GRADLE = "8.12"
+
+          # 1) 降级 AGP：覆盖所有可能出现 AGP 版本的位置
+          #    Flutter 3.44 用「版本目录」：gradle/libs.versions.toml 里 agp="9.0.1"，
+          #    settings.gradle.kts 用 alias(libs.plugins.android.application) 引用（无内联版本）。
+          #    老版本 Flutter 可能在 settings.gradle(.kts) 内联 version，或 build.gradle classpath。
+          candidates = [
+              "android/settings.gradle", "android/settings.gradle.kts",
+              "android/gradle/libs.versions.toml",
+          ]
+          candidates += glob.glob("android/**/*.gradle", recursive=True)
+          candidates += glob.glob("android/**/*.gradle.kts", recursive=True)
+
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              with open(path) as f:
+                  s = f.read()
+              new = s
+              # 内联写法：id("com.android.application") version "9.0.1" apply false
+              new = re.sub(r'(com\.android\.application[^v]*?version\s*["\']?)[\d.]+',
+                           r'\g<1>%s' % AGP, new)
+              # 老式 classpath：com.android.tools.build:gradle:9.0.1
+              new = re.sub(r'(com\.android\.tools\.build:gradle:)[\d.]+',
+                           r'\g<1>%s' % AGP, new)
+              # 版本目录 [versions]：agp = "9.0.1" / androidGradlePlugin = "9.0.1"
+              new = re.sub(r'^\s*((?:agp|androidGradlePlugin|android_gradle_plugin)\s*=\s*["\']?)[\d.]+',
+                           r'\g<1>%s' % AGP, new, flags=re.MULTILINE)
+              # 兜底：toml 里若直接写 9.0.1（唯一 AGP 版本号，不会误伤 kotlin/gradle）
+              if path.endswith("libs.versions.toml"):
+                  new = re.sub(r'9\.0\.1', AGP, new)
+              if new != s:
+                  with open(path, "w") as f:
+                      f.write(new)
+                  print("AGP ->", AGP, ":", path)
+
+          # 2) 降级 Gradle wrapper（AGP 8.7 配套版本）
+          gw = "android/gradle/wrapper/gradle-wrapper.properties"
+          if os.path.exists(gw):
+              with open(gw) as f:
+                  s = f.read()
+              new = re.sub(r'gradle-[\d.]+-', 'gradle-%s-' % GRADLE, s)
+              with open(gw, "w") as f:
+                  f.write(new)
+              print("Gradle ->", GRADLE, ":", gw)
+
+          # 3) 关闭内置 Kotlin（AGP 8.7 默认即 false，显式写出以避免与 jni 自 apply 冲突）
+          gp = "android/gradle.properties"
+          with open(gp) as f:
+              lines = f.read().splitlines()
+          out = [l for l in lines
+                 if not l.strip().startswith("android.builtInKotlin")
+                 and not l.strip().startswith("android.newDsl")]
+          out.append("android.builtInKotlin=false")
+          out.append("android.newDsl=false")
+          with open(gp, "w") as f:
+              f.write("\n".join(out) + "\n")
+          print("builtInKotlin=false 已写入")
+
+          # 4) 校验：确认 AGP / Gradle 实际版本（正则没匹配到会立刻暴露）
+          print("---- settings.gradle* 内联 AGP ----")
+          subprocess.run(r'grep -rn "com.android.application" android/settings.gradle* || true', shell=True)
+          print("---- libs.versions.toml agp ----")
+          subprocess.run(r'grep -n "agp" android/gradle/libs.versions.toml || true', shell=True)
+          print("---- gradle wrapper ----")
+          subprocess.run(r'grep -n "distributionUrl" android/gradle/wrapper/gradle-wrapper.properties || true', shell=True)
+          PYEOF
+
+      - name: 📦 安装依赖
+        run: flutter pub get
+
+      - name: 🔍 静态分析
+        run: flutter analyze
+        continue-on-error: true
+
+      # ==================== Android APK ====================
+      - name: 🤖 构建 Android APK
+        run: flutter build apk --release
+
+      - name: 📤 上传 Android APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 90
+
+      # ==================== macOS App ====================
+      - name: 🍎 构建 macOS App
+        run: flutter build macos --release
+
+      - name: 📦 打包 macOS App (zip)
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r sanjoyapp_print-macos.zip sanjoyapp_print.app
+
+      - name: 📤 上传 macOS App
+        uses: actions/upload-artifact@v5
+        with:
+          name: macos-app
+          path: build/macos/Build/Products/Release/sanjoyapp_print-macos.zip
+          retention-days: 90
+
+      # ==================== 创建 Release ====================
+      - name: 🎉 创建 GitHub Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          files: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/macos/Build/Products/Release/sanjoyapp_print-macos.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
