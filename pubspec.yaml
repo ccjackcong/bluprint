@@ -15,11 +15,14 @@ dependencies:
   shared_preferences: ^2.2.2
   http: ^1.2.0
   cupertino_icons: ^1.0.6
-  # 钉到 2.0.x：2.1.x 的 path_provider_android 已迁移到 JNI(jnigen)，
-  # 会拉入 broken 的 jni 1.0.1，导致 CI Gradle 评估 ':jni' 失败
-  # (Could not find method kotlin())。2.0.x 仍是 MethodChannel，无 jni 依赖。
-  path_provider: ">=2.0.0 <2.1.0"
-  path_provider_android: ">=2.0.0 <2.1.0"
+  # 必须用 2.1.x+：2.0.x 的 path_provider_android 仍用已废弃的 v1 嵌入
+  # (PluginRegistry.Registrar)，CI 的 Flutter stable(≥3.29) 已移除 v1 嵌入，
+  # 报 "cannot find symbol PluginRegistry.Registrar"。2.1.x 改用 JNI(jnigen) 走 v2 嵌入，
+  # 可正常编译；但其传递依赖 jni 在 AGP 9 内置 Kotlin(android.builtInKotlin=true) 下报
+  # "Could not find method kotlin() on :jni"，该报错由 build.yml 写入
+  # android/gradle.properties 的 android.builtInKotlin=false 修复（dart-lang/native#3415）。
+  path_provider: ">=2.1.0 <3.0.0"
+  path_provider_android: ">=2.1.0 <3.0.0"
 
 dev_dependencies:
   flutter_test:
