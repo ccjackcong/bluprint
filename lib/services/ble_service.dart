@@ -581,6 +581,7 @@ class BleService extends ChangeNotifier {
           } else {
             throw Exception('NIIMBOT 协议需要原始位图数据，但 rawPixels 为空');
           }
+          break;
 
         case PrinterBrand.gprinter:
         case PrinterBrand.generic:
