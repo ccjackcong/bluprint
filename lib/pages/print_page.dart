@@ -292,6 +292,13 @@ class _PrintPageState extends State<PrintPage> {
     final timeStr =
         '${task.receivedAt.hour.toString().padLeft(2, '0')}:${task.receivedAt.minute.toString().padLeft(2, '0')}:${task.receivedAt.second.toString().padLeft(2, '0')}';
 
+    // 字节数: 桥接路径 task.data 为空, 真实数据在 textData (均为 base64)
+    final int byteLen = task.data.isNotEmpty
+        ? task.data.length
+        : (task.textData?.isNotEmpty == true
+            ? (task.textData!.length ~/ 1.33)
+            : 0);
+
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
       child: ListTile(
@@ -314,12 +321,6 @@ class _PrintPageState extends State<PrintPage> {
                   : task.status.label,
           style: Theme.of(context).textTheme.bodyMedium,
         ),
-        // 字节数: 桥接路径 task.data 为空, 真实数据在 textData (均为 base64)
-        final int byteLen = task.data.isNotEmpty
-            ? task.data.length
-            : (task.textData?.isNotEmpty == true
-                ? (task.textData!.length ~/ 1.33)
-                : 0);
         subtitle: Text(
           isFailed && task.error != null
               ? '$timeStr — $byteLen 字节 · ${task.copies}份 · ${task.error}'
