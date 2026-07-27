@@ -52,6 +52,17 @@ class _KnownPrinterPresets {
   };
 }
 
+/// 归一化 BLE UUID：将 16-bit(fff0) / 32-bit(xxxxxxxx) 短形式展开为完整 128-bit，
+/// 用于与预设的完整 UUID 比较。Android 上的 flutter_blue_plus 对标准 UUID 返回短形式
+/// （如 fff0 / fff2），而预设写的是完整 128-bit（0000FFF0-...），两者直接比较会永远不匹配，
+/// 导致佳博 FFF2 (WNR) 打印通道被跳过、回退到不打印的串口桥。
+String _normUuid(String u) {
+  final s = u.toLowerCase().trim();
+  if (s.length == 4) return '0000$s-0000-1000-8000-00805f9b34fb';
+  if (s.length == 8) return '$s-0000-1000-8000-00805f9b34fb';
+  return s;
+}
+
 /// BLE 打印机管理服务（单例）
 class BleService extends ChangeNotifier {
   static final BleService instance = BleService._();
@@ -401,10 +412,10 @@ class BleService extends ChangeNotifier {
     final targetWriteUuid = preset['write']!;
 
     for (final service in services) {
-      if (service.uuid.toString().toLowerCase() == targetSvcUuid.toLowerCase()) {
+      if (_normUuid(service.uuid.toString()) == _normUuid(targetSvcUuid)) {
         for (final char in service.characteristics) {
-          final cu = char.uuid.toString().toLowerCase();
-          if (cu == targetWriteUuid.toLowerCase() &&
+          final cu = _normUuid(char.uuid.toString());
+          if (cu == _normUuid(targetWriteUuid) &&
               (char.properties.write || char.properties.writeWithoutResponse)) {
             _writeChar = char;
             _serviceUuid = service.uuid.toString();
@@ -428,17 +439,17 @@ class BleService extends ChangeNotifier {
       final nusRx = preset['nus_rx']!;
 
       for (final service in services) {
-        if (service.uuid.toString().toLowerCase() == nusSvc.toLowerCase()) {
+        if (_normUuid(service.uuid.toString()) == _normUuid(nusSvc)) {
           for (final char in service.characteristics) {
-            final cu = char.uuid.toString().toLowerCase();
-            if (cu == nusTx.toLowerCase() &&
+            final cu = _normUuid(char.uuid.toString());
+            if (cu == _normUuid(nusTx) &&
                 (char.properties.write || char.properties.writeWithoutResponse)) {
               _writeChar = char;
               _serviceUuid = nusSvc;
               _writeCharUuid = nusTx;
               _logMessage('📍 NUS 备用通道匹配: $nusSvc / $nusTx');
             }
-            if (cu == nusRx.toLowerCase() && _notifyChar == null) {
+            if (cu == _normUuid(nusRx) && _notifyChar == null) {
               _notifyChar = char;
               try { await char.setNotifyValue(true); } catch (_) {}
               char.lastValueStream.listen(_onNotify);
@@ -456,18 +467,18 @@ class BleService extends ChangeNotifier {
   Future<bool> _tryMatchAltPreset(List<BluetoothService> services,
       String svcUuid, String writeUuid, String notifyUuid, String label) async {
     for (final service in services) {
-      final suid = service.uuid.toString().toLowerCase();
-      if (suid != svcUuid.toLowerCase()) continue;
+      final suid = _normUuid(service.uuid.toString());
+      if (suid != _normUuid(svcUuid)) continue;
       for (final char in service.characteristics) {
-        final cu = char.uuid.toString().toLowerCase();
-        if (cu == writeUuid.toLowerCase() &&
+        final cu = _normUuid(char.uuid.toString());
+        if (cu == _normUuid(writeUuid) &&
             (char.properties.write || char.properties.writeWithoutResponse)) {
           _writeChar = char;
           _serviceUuid = service.uuid.toString();
           _writeCharUuid = char.uuid.toString();
           _logMessage('📍 $label: Service=$svcUuid Write=$writeUuid');
         }
-        if (cu == notifyUuid.toLowerCase() && _notifyChar == null &&
+        if (cu == _normUuid(notifyUuid) && _notifyChar == null &&
             (char.properties.notify || char.properties.indicate)) {
           _notifyChar = char;
           try { await char.setNotifyValue(true); } catch (_) {}
@@ -489,9 +500,9 @@ class BleService extends ChangeNotifier {
     if (svcUuid.isEmpty || writeUuid.isEmpty) return false;
 
     for (final service in services) {
-      if (service.uuid.toString().toLowerCase() == svcUuid.toLowerCase()) {
+      if (_normUuid(service.uuid.toString()) == _normUuid(svcUuid)) {
         for (final char in service.characteristics) {
-          if (char.uuid.toString().toLowerCase() == writeUuid.toLowerCase() &&
+          if (_normUuid(char.uuid.toString()) == _normUuid(writeUuid) &&
               (char.properties.write || char.properties.writeWithoutResponse)) {
             _writeChar = char;
             _serviceUuid = svcUuid;
