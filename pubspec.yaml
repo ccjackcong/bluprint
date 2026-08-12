@@ -15,6 +15,7 @@ dependencies:
   shared_preferences: ^2.2.2
   http: ^1.2.0
   cupertino_icons: ^1.0.6
+  mqtt_client: ^10.0.0
   # 必须用 2.1.x+：2.0.x 的 path_provider_android 仍用已废弃的 v1 嵌入
   # (PluginRegistry.Registrar)，CI 的 Flutter stable(≥3.29) 已移除 v1 嵌入，
   # 报 "cannot find symbol PluginRegistry.Registrar"。2.1.x 改用 JNI(jnigen) 走 v2 嵌入，
