@@ -5,6 +5,7 @@ import 'pages/log_page.dart';
 import 'services/ble_service.dart';
 import 'services/http_server.dart';
 import 'services/api_service.dart';
+import 'services/mqtt_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,8 @@ void main() async {
   BleService.instance.init();
   await HttpPrintServer.instance.start();
   await ApiService.instance.init();
+  // MQTT 默认不启动，用户设置中手动开启
+  MqttPushService.instance;
 
   runApp(const SanjoyPrintApp());
 }
