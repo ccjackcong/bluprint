@@ -349,7 +349,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   setState(() {});
                                 } else {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('请先扫描并连接 $mac'), duration: Duration(seconds: 2)),
+                                    SnackBar(content: Text('请先扫描并连接 $mac'), duration: Duration(seconds: 2)),
                                   );
                                 }
                               },
