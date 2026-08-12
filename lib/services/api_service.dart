@@ -7,9 +7,14 @@ import '../models/print_task.dart';
 import 'ble_service.dart';
 import 'http_server.dart';
 import 'app_log.dart';
+import 'mqtt_service.dart';
 
 /// 服务器 API 客户端 — BluPrint 拉取 BLE 打印任务
-/// 支持自动心跳（保持设备在线）+ 自动轮询（拉取并打印待处理任务）
+///
+/// 2026-08-12 重构：从"轮询"改为"MQTT 推送 + 手动拉取"。
+/// - 任务产生后后端通过 MQTT 推送通知，App 收到后立刻拉取打印（毫秒级）。
+/// - 保留手动拉取按钮（fetchAndPrint），推送未收到时可手动触发。
+/// - 心跳保活定时器保留（60s 一次 bindDevice），不依赖 MQTT。
 class ApiService extends ChangeNotifier {
   static final ApiService instance = ApiService._();
   ApiService._();
@@ -33,7 +38,7 @@ class ApiService extends ChangeNotifier {
   String? _lastError;
   String? get lastError => _lastError;
 
-  // ── 自动轮询状态 ──
+  // ── 状态 ──
   bool _isServerConnected = false;
   bool get isServerConnected => _isServerConnected;
 
@@ -43,12 +48,14 @@ class ApiService extends ChangeNotifier {
   DateTime? _lastHeartbeat;
   DateTime? get lastHeartbeat => _lastHeartbeat;
 
-  bool _autoPolling = false;
-  bool get autoPolling => _autoPolling;
+  bool _isProcessing = false;
+
+  // ── MQTT 推送开关（默认关闭，设置中可开启）──
+  bool _mqttEnabled = false;
+  bool get mqttEnabled => _mqttEnabled;
 
   Timer? _heartbeatTimer;
-  Timer? _pollTimer;
-  bool _isProcessing = false;
+  bool _heartbeatRunning = false;
 
   // ── 按 BLE MAC 索引的打印机配置存储 ──
   Map<String, Map<String, String>> _printerConfigs = {};
@@ -88,9 +95,15 @@ class ApiService extends ChangeNotifier {
       loadConfigForPrinter(mac);
     };
 
-    // 已配置则自动启动轮询
+    // 注册 MQTT 推送回调 → 收到通知立刻拉取打印
+    MqttPushService.instance.onNotify = () {
+      _log('[ApiService] 📡 MQTT 推送触发拉取');
+      fetchAndPrint();
+    };
+
+    // 已配置则自动启动心跳（不启动轮询，改 MQTT 推送）
     if (_isConfigured) {
-      startAutoPoll();
+      startHeartbeat();
     }
     notifyListeners();
   }
@@ -131,7 +144,7 @@ class ApiService extends ChangeNotifier {
     final cfg = _printerConfigs[mac];
     if (cfg == null) return;
 
-    stopAutoPoll();
+    stopHeartbeat();
 
     _baseUrl = cfg['base_url'] ?? '';
     _deviceId = cfg['device_id'] ?? '';
@@ -148,8 +161,13 @@ class ApiService extends ChangeNotifier {
     _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
     _lastError = null;
 
+    // 更新 MQTT 订阅的门店 ID
+    if (_storeId.isNotEmpty) {
+      MqttPushService.instance.updateStoreId(_storeId);
+    }
+
     if (_isConfigured) {
-      startAutoPoll();
+      startHeartbeat();
     }
     _log('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId');
     notifyListeners();
@@ -186,42 +204,91 @@ class ApiService extends ChangeNotifier {
       _log('[ApiService] 💾 已将配置关联到打印机 $currentMac');
     }
 
-    // 保存后自动启动轮询
+    // 更新 MQTT 订阅的门店 ID
+    if (_storeId.isNotEmpty) {
+      MqttPushService.instance.updateStoreId(_storeId);
+    }
+
+    // 保存后自动启动心跳
     if (_isConfigured) {
-      startAutoPoll();
+      startHeartbeat();
     }
     notifyListeners();
   }
 
-  // ── 启动 / 停止自动轮询 ──
-  void startAutoPoll() {
-    if (!_isConfigured || _autoPolling) return;
-    _autoPolling = true;
-    _log('[ApiService] 🚀 启动自动轮询: $_baseUrl device=$_deviceId store=$_storeId');
+  // ── 从 IoT 设备管理 API 拉取 BLE 打印机的 MQTT 配置 ──
+  Future<bool> fetchBleConfig(String deviceKey) async {
+    if (_baseUrl.isEmpty) {
+      _lastError = '请先配置服务器地址';
+      return false;
+    }
+    try {
+      final uri = Uri.parse('$_baseUrl/api/iot/ble/config/$deviceKey');
+      final response = await http.get(uri).timeout(const Duration(seconds: 8));
 
-    // 心跳定时器（每 60 秒保持在线）
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          // 提取 API 配置字段
+          _deviceId = data['device_id']?.toString() ?? '';
+          _storeId = data['store_id']?.toString() ?? '';
+
+          // 同步到 SharedPreferences
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('api_device_id', _deviceId);
+          await prefs.setString('api_store_id', _storeId);
+
+          _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
+          _lastError = null;
+
+          // 注入 MQTT 配置
+          await MqttPushService.instance.configure(data);
+
+          _log('[ApiService] ✅ 已从服务器拉取 BLE 配置: device=$_deviceId store=$_storeId');
+          notifyListeners();
+          return true;
+        }
+      }
+      _lastError = '拉取配置失败: ${response.statusCode}';
+      return false;
+    } catch (e) {
+      _lastError = '网络错误: $e';
+      return false;
+    }
+  }
+
+  // ── 心跳保活（仅心跳，不轮询）──
+  void startHeartbeat() {
+    if (!_isConfigured || _heartbeatRunning) return;
+    _heartbeatRunning = true;
+    _log('[ApiService] 💓 启动心跳保活: $_baseUrl device=$_deviceId store=$_storeId');
+
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 60), (_) => _doHeartbeat());
 
-    // 轮询定时器（每 10 秒检查待打印任务）
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(seconds: 10), (_) => _autoFetchAndPrint());
-
-    // 立即执行一次
+    // 立即心跳一次
     _doHeartbeat();
-    _autoFetchAndPrint();
     notifyListeners();
   }
 
-  void stopAutoPoll() {
-    _autoPolling = false;
+  void stopHeartbeat() {
+    _heartbeatRunning = false;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
-    _pollTimer?.cancel();
-    _pollTimer = null;
     _isServerConnected = false;
     _pendingJobCount = 0;
-    _log('[ApiService] ⏹ 停止自动轮询');
+    _log('[ApiService] ⏹ 停止心跳保活');
+    notifyListeners();
+  }
+
+  // ── MQTT 推送开关（设置中开启/关闭）──
+  Future<void> setMqttEnabled(bool enabled) async {
+    _mqttEnabled = enabled;
+    if (enabled && _storeId.isNotEmpty) {
+      await MqttPushService.instance.setEnabled(true, storeId: _storeId);
+    } else {
+      await MqttPushService.instance.setEnabled(false);
+    }
     notifyListeners();
   }
 
@@ -241,8 +308,8 @@ class ApiService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── 自动拉取并打印（纯桥接：后端预渲染字节流直发打印机）──
-  Future<void> _autoFetchAndPrint() async {
+  // ── 拉取并打印（MQTT 推送触发 / 手动拉取按钮）──
+  Future<void> fetchAndPrint() async {
     if (_isProcessing) return;
 
     _isProcessing = true;
@@ -319,7 +386,7 @@ class ApiService extends ChangeNotifier {
       _pendingJobCount = remaining.length;
       notifyListeners();
     } catch (e) {
-      _log('[ApiService] 自动轮询异常: $e');
+      _log('[ApiService] fetchAndPrint 异常: $e');
     } finally {
       _isProcessing = false;
     }
