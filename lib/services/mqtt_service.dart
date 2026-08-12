@@ -177,9 +177,12 @@ class MqttPushService extends ChangeNotifier {
     _currentTopic = topic;
 
     // 设置消息回调
-    _client!.updates!.listen((List<mqtt.MqttReceivedMessage<mqtt.MqttPublishMessage>> messages) {
+    _client!.updates!.listen((List<mqtt.MqttReceivedMessage<mqtt.MqttMessage>> messages) {
       for (final msg in messages) {
-        _onMessage(msg.topic, msg.payload);
+        final payload = msg.payload;
+        if (payload is mqtt.MqttPublishMessage) {
+          _onMessage(msg.topic, payload);
+        }
       }
     });
   }
