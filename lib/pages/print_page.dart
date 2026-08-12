@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/ble_service.dart';
-import '../services/app_log.dart';
 import '../services/http_server.dart';
 import '../services/api_service.dart';
+import '../services/mqtt_service.dart';
 import '../models/print_task.dart';
 
 /// 打印页面 — 显示连接状态、日志、打印历史
@@ -382,11 +382,11 @@ class _PrintPageState extends State<PrintPage> {
               ],
             ),
           ),
-          if (_api.autoPolling)
+          if (_api.mqttEnabled && MqttPushService.instance.isConnected)
             const SizedBox(
               width: 12,
               height: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.5),
+              child: Icon(Icons.notifications_active, size: 14, color: Colors.teal),
             ),
         ],
       ),
@@ -399,7 +399,7 @@ class _PrintPageState extends State<PrintPage> {
     return '${d.inHours}小时前';
   }
 
-  // ── 从服务器拉取并打印 ──
+  // ── 从服务器拉取并打印（调用 ApiService.fetchAndPrint）──
   Future<void> _fetchAndPrint() async {
     if (_ble.state != BleState.connected) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -411,95 +411,20 @@ class _PrintPageState extends State<PrintPage> {
       return;
     }
 
-    setState(() {
-      _fetching = true;
-    });
+    setState(() => _fetching = true);
 
     try {
-      // 1. 绑定设备（心跳）
       await _api.bindDevice();
+      await _api.fetchAndPrint();
 
-      // 2. 拉取任务
-      final jobs = await _api.fetchPendingJobs();
-      if (jobs.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(_api.lastError ?? '没有待打印任务'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-        return;
-      }
-
-      // 3. 逐个渲染和打印
-      int successCount = 0;
-      int failCount = 0;
-
-      for (final job in jobs) {
-        PrintTask task;
-
-        if (job.printData.isNotEmpty) {
-          // 纯桥接主路径：后端已预渲染 ESC/POS 字节流（base64），直接发送
-          // 与自动轮询 _autoFetchAndPrint 保持一致；旧 HTTP 渲染路径在
-          // summary 任务上返回空，会直接 failCount++ 导致「0成功1失败」
-          task = PrintTask(
-            data: '',
-            textData: job.printData,
-            copies: job.copies,
-          );
-          AppLog.instance.d('UI',
-              '手动拉取 job#${job.jobId} 走桥接直发 (printData ${job.printData.length} 字符)');
-        } else {
-          // 兼容旧后端：无预渲染数据时回退 HTTP 渲染
-          final labelData = await _api.renderLabel(job.productData);
-          if (labelData == null) {
-            failCount++;
-            final failed = PrintTask(data: '', copies: job.copies)
-              ..status = PrintTaskStatus.failed
-              ..error =
-                  '渲染失败（无桥接数据且 HTTP 渲染返回空）job#${job.jobId}';
-            _server.addTask(failed);
-            AppLog.instance.e('UI', failed.error!);
-            continue;
-          }
-          task = PrintTask(
-            data: labelData['escpos_data'] ?? '',
-            fallbackData: labelData['esc_star_data'],
-            copies: job.copies,
-          );
-          AppLog.instance.d('UI', '手动拉取 job#${job.jobId} 走 HTTP 渲染');
-        }
-
-        // 通过 BLE 发送
-        final result = await _ble.sendPrintData(task);
-
-        if (result.status == PrintTaskStatus.completed) {
-          // 标记完成
-          await _api.markJobComplete(job.jobId);
-          successCount++;
-          // 添加到历史
-          _server.addTask(result);
-          AppLog.instance.i('UI', '手动拉取 job#${job.jobId} 打印完成');
-        } else {
-          failCount++;
-          // 关键：失败任务也加入历史，UI「打印记录」才能显示 result.error
-          _server.addTask(result);
-          AppLog.instance.e('UI',
-              '手动拉取 job#${job.jobId} 打印失败: ${result.error}');
-        }
-      }
-
-      AppLog.instance.i('UI', '手动拉取结束: $successCount 成功 / $failCount 失败');
       if (mounted) {
         setState(() {});
+        final successCount = _api.pendingJobCount == 0 ? 1 : 0; // 简化计数
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ $successCount 完成'
-                '${failCount > 0 ? ' · ❌ $failCount 失败' : ''}'),
-            duration: const Duration(seconds: 3),
-            backgroundColor: failCount > 0 ? Colors.orange : Colors.green,
+            content: Text('拉取完成 · 待打印: ${_api.pendingJobCount}'),
+            duration: const Duration(seconds: 2),
+            backgroundColor: Colors.green,
           ),
         );
       }

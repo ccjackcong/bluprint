@@ -4,6 +4,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../services/ble_service.dart';
 import '../services/http_server.dart';
 import '../services/api_service.dart';
+import '../services/mqtt_service.dart';
 
 /// 设置页面 — BLE 扫描/选择打印机、HTTP 服务端口配置
 class SettingsPage extends StatefulWidget {
@@ -24,7 +25,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _apiDeviceIdCtrl = TextEditingController();
   final TextEditingController _apiStoreIdCtrl = TextEditingController();
   final TextEditingController _apiDeviceKeyCtrl = TextEditingController();
-  bool _scanning = false;
+  final TextEditingController _bleBindKeyCtrl = TextEditingController(); // BLE 设备绑定输入框
   StreamSubscription<BluetoothAdapterState>? _adapterSub;
   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
 
@@ -63,6 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _apiDeviceIdCtrl.dispose();
     _apiStoreIdCtrl.dispose();
     _apiDeviceKeyCtrl.dispose();
+    _bleBindKeyCtrl.dispose();
     super.dispose();
   }
 
@@ -118,6 +120,16 @@ class _SettingsPageState extends State<SettingsPage> {
           // ── 服务器 API 配置（BLE 打印中转） ──
           _buildSectionTitle('SANJOY 系统 API 配置'),
           _buildApiConfig(),
+          const SizedBox(height: 16),
+
+          // ── BLE 设备绑定（从 IoT 管理拉取 MQTT 参数）──
+          _buildSectionTitle('BLE 设备绑定（MQTT 推送）'),
+          _buildBleBindingConfig(),
+          const SizedBox(height: 16),
+
+          // ── MQTT 推送开关 ──
+          _buildSectionTitle('MQTT 实时推送'),
+          _buildMqttConfig(),
           const SizedBox(height: 32),
         ],
       ),
@@ -275,8 +287,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           // 品牌徽章
                           Chip(
                             label: Text(brandLabel, style: const TextStyle(fontSize: 10)),
-                            backgroundColor: brandColor.withOpacity(0.15),
-                            side: BorderSide(color: brandColor.withOpacity(0.3)),
+                            backgroundColor: brandColor.withValues(alpha: 0.15),
+                            side: BorderSide(color: brandColor.withValues(alpha: 0.3)),
                             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             visualDensity: VisualDensity.compact,
                             padding: EdgeInsets.zero,
@@ -337,7 +349,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   setState(() {});
                                 } else {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('请先扫描并连接 $mac'), duration: Duration(seconds: 2)),
+                                    const SnackBar(content: Text('请先扫描并连接 $mac'), duration: Duration(seconds: 2)),
                                   );
                                 }
                               },
@@ -365,9 +377,11 @@ class _SettingsPageState extends State<SettingsPage> {
                               onPressed: () async {
                                 await _ble.savePrinterConfig(deviceId: mac);
                                 setState(() {});
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('已切换为当前打印机'), duration: Duration(seconds: 1)),
-                                );
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('已切换为当前打印机'), duration: Duration(seconds: 1)),
+                                  );
+                                }
                               },
                               child: const Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -424,10 +438,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: _ble.isScanning
                     ? null
                     : () async {
-                        setState(() => _scanning = true);
                         await _ble.startScan();
                         await Future.delayed(const Duration(seconds: 10));
-                        if (mounted) setState(() => _scanning = false);
+                        if (mounted) setState(() {});
                       },
                 icon: _ble.isScanning
                     ? const SizedBox(
@@ -449,7 +462,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Text(
               '点击"扫描设备"查找附近的 BLE 打印机',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                   ),
             ),
           ),
@@ -585,14 +598,16 @@ class _SettingsPageState extends State<SettingsPage> {
                     final port = int.tryParse(_portCtrl.text.trim()) ?? 15987;
                     await _server.start(port: port);
                     setState(() {});
-                    if (_server.isRunning) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('服务已启动: http://127.0.0.1:$port'), duration: const Duration(seconds: 2)),
-                      );
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('启动失败: ${_server.lastError}'), backgroundColor: Colors.red),
-                      );
+                    if (mounted) {
+                      if (_server.isRunning) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('服务已启动: http://127.0.0.1:$port'), duration: const Duration(seconds: 2)),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('启动失败: ${_server.lastError}'), backgroundColor: Colors.red),
+                        );
+                      }
                     }
                   },
                   child: const Text('启动'),
@@ -612,8 +627,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 if (_server.isRunning)
                   TextButton(
                     onPressed: () async { await _server.stop(); setState(() {}); },
-                    child: const Text('停止'),
                     style: TextButton.styleFrom(foregroundColor: Colors.red),
+                    child: const Text('停止'),
                   ),
               ],
             ),
@@ -680,7 +695,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Expanded(
                   child: Text(
                     _api.isConfigured
-                        ? (_api.autoPolling ? '已配置 · 自动轮询中 (心跳60s/拉取10s)' : '已配置 · 轮询未启动')
+                        ? '已配置 · 心跳保活中 (60s)'
                         : '未配置',
                     style: Theme.of(context).textTheme.bodySmall,
                     overflow: TextOverflow.ellipsis,
@@ -700,7 +715,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(ok
-                              ? '✅ 配置已保存，设备已绑定，自动轮询已启动'
+                              ? '✅ 配置已保存，设备已绑定'
                               : '⚠️ 配置已保存，但绑定失败: ${_api.lastError ?? "未知"}'),
                           duration: const Duration(seconds: 2),
                           backgroundColor: ok ? Colors.green : Colors.orange,
@@ -716,5 +731,171 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ),
     );
+  }
+
+  /// BLE 设备绑定 — 输入 device_key 一键从服务器拉取 MQTT 参数
+  Widget _buildBleBindingConfig() {
+    final mqtt = MqttPushService.instance;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            TextField(
+              controller: _bleBindKeyCtrl,
+              decoration: const InputDecoration(
+                labelText: '设备密钥 (device_key)',
+                border: OutlineInputBorder(),
+                isDense: true,
+                helperText: '在系统 IoT 设备管理 → BLE 打印机 → 硬件配置中复制',
+              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            // 显示已加载的 MQTT 配置
+            if (mqtt.isConfigured) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.teal.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.teal.shade100),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildMqttInfoRow('服务器', mqtt.brokerHost),
+                    _buildMqttInfoRow('端口', mqtt.brokerPort.toString()),
+                    _buildMqttInfoRow('用户名', mqtt.username),
+                    _buildMqttInfoRow('订阅主题', mqtt.subscribeTopic),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Row(
+              children: [
+                Icon(
+                  Icons.circle,
+                  size: 10,
+                  color: mqtt.isConfigured ? Colors.green : Colors.grey,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    mqtt.isConfigured ? 'MQTT 参数已就绪' : '尚未绑定设备',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.tonal(
+                  onPressed: () async {
+                    final key = _bleBindKeyCtrl.text.trim();
+                    if (key.isEmpty) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('请先输入设备密钥'), duration: Duration(seconds: 2)),
+                        );
+                      }
+                      return;
+                    }
+                    // 同时保存 device_key 到 API 配置（后续心跳/拉取任务需要）
+                    _apiDeviceKeyCtrl.text = key;
+                    await _api.saveConfig(
+                      baseUrl: _apiUrlCtrl.text.trim(),
+                      deviceId: _apiDeviceIdCtrl.text.trim(),
+                      storeId: _apiStoreIdCtrl.text.trim(),
+                      deviceKey: key,
+                    );
+                    final ok = await _api.fetchBleConfig(key);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(ok ? '✅ MQTT 参数已从服务器加载' : '❌ 拉取失败: ${_api.lastError ?? "未知"}'),
+                          duration: const Duration(seconds: 2),
+                          backgroundColor: ok ? Colors.green : Colors.red,
+                        ),
+                      );
+                      setState(() {});
+                    }
+                  },
+                  child: const Text('绑定设备'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMqttInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 72, child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700]))),
+          Expanded(child: SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMqttConfig() {
+    final mqtt = MqttPushService.instance;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            // 开关
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('启用 MQTT 实时推送'),
+              subtitle: Text(
+                mqtt.isConnected
+                    ? '已连接 · 上次通知: ${mqtt.lastNotification != null ? _formatTime(mqtt.lastNotification!) : '暂无'}'
+                    : mqtt.isEnabled
+                        ? '正在连接...'
+                        : '关闭后仅手动拉取打印',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              value: _api.mqttEnabled,
+              onChanged: (v) => _api.setMqttEnabled(v),
+              activeColor: Colors.teal,
+            ),
+            // 连接状态
+            Row(
+              children: [
+                Icon(
+                  Icons.circle,
+                  size: 10,
+                  color: mqtt.isConnected ? Colors.green : Colors.grey,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  mqtt.isConnected ? 'MQTT 已连接 (leestofu.cn:8883 TLS)' : 'MQTT 未连接',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+            if (mqtt.lastError != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                '⚠ ${mqtt.lastError}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.red),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dt) {
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}:${dt.second.toString().padLeft(2, '0')}';
   }
 }
