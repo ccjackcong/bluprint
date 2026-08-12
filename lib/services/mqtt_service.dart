@@ -177,7 +177,7 @@ class MqttPushService extends ChangeNotifier {
     _currentTopic = topic;
 
     // 设置消息回调
-    _client!.updates!.listen((List<mqtt.MqttReceivedMessage<mqtt.MqttMessage>> messages) {
+    _client!.updates!.listen((List<mqtt.MqttReceivedMessage<mqtt.MqttPublishMessage>> messages) {
       for (final msg in messages) {
         _onMessage(msg.topic, msg.payload);
       }
@@ -209,7 +209,7 @@ class MqttPushService extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     try {
-      await _client?.disconnect();
+      _client?.disconnect();
     } catch (_) {}
     _client = null;
     _connected = false;
