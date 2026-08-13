@@ -151,6 +151,9 @@ class ApiService extends ChangeNotifier {
     _storeId = cfg['store_id'] ?? '';
     _deviceKey = cfg['device_key'] ?? '';
 
+    // 恢复 MQTT 推送开关（每台独立）
+    _mqttEnabled = cfg['mqtt_enabled'] == 'true';
+
     // 同步全局配置
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('api_base_url', _baseUrl);
@@ -161,23 +164,39 @@ class ApiService extends ChangeNotifier {
     _isConfigured = _baseUrl.isNotEmpty && _deviceId.isNotEmpty && _deviceKey.isNotEmpty;
     _lastError = null;
 
-    // 更新 MQTT 订阅的门店 ID
+    // 恢复 MQTT 参数（若已保存），并更新订阅门店 ID
+    final mqtt = MqttPushService.instance;
+    if (cfg['mqtt_username']?.isNotEmpty == true) {
+      mqtt.applyConfig(cfg);
+    }
     if (_storeId.isNotEmpty) {
-      MqttPushService.instance.updateStoreId(_storeId);
+      mqtt.updateStoreId(_storeId);
+    }
+
+    // 按保存的开关状态恢复 MQTT 连接
+    if (_mqttEnabled && _storeId.isNotEmpty) {
+      await mqtt.setEnabled(true, storeId: _storeId);
+    } else {
+      await mqtt.setEnabled(false);
     }
 
     if (_isConfigured) {
       startHeartbeat();
     }
-    _log('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId');
+    _log('[ApiService] ✅ 已加载打印机 $mac 的 API 配置: device=$_deviceId store=$_storeId mqtt=$_mqttEnabled');
     notifyListeners();
   }
 
+  /// 保存 API 配置。
+  ///
+  /// [mac] 指定关联的打印机 MAC。传 null 时回退到「当前打印机」。
+  /// 每台打印机的配置独立存储，切换打印机时自动切换。
   Future<void> saveConfig({
     required String baseUrl,
     required String deviceId,
     required String storeId,
     required String deviceKey,
+    String? mac,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     _baseUrl = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
@@ -190,18 +209,21 @@ class ApiService extends ChangeNotifier {
     await prefs.setString('api_store_id', _storeId);
     await prefs.setString('api_device_key', _deviceKey);
 
-    // 同时保存到当前 BLE 打印机的配置中（按 MAC 索引）
+    // 同时保存到指定（或当前）BLE 打印机的配置中（按 MAC 索引）
     final ble = BleService.instance;
-    final currentMac = ble.savedDeviceId;
-    if (currentMac.isNotEmpty) {
-      _printerConfigs[currentMac] = {
+    final targetMac = (mac != null && mac.isNotEmpty) ? mac : ble.savedDeviceId;
+    if (targetMac.isNotEmpty) {
+      // 保留该 MAC 已有的 MQTT 参数和开关，仅更新 API 字段
+      final existing = _printerConfigs[targetMac] ?? <String, String>{};
+      _printerConfigs[targetMac] = {
+        ...existing,
         'base_url': _baseUrl,
         'device_id': _deviceId,
         'store_id': _storeId,
         'device_key': _deviceKey,
       };
       await _savePrinterConfigs();
-      _log('[ApiService] 💾 已将配置关联到打印机 $currentMac');
+      _log('[ApiService] 💾 已将配置关联到打印机 $targetMac');
     }
 
     // 更新 MQTT 订阅的门店 ID
@@ -216,8 +238,32 @@ class ApiService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 获取某台打印机已保存的 API 配置（供设置页回显）
+  Map<String, String>? getPrinterConfig(String mac) => _printerConfigs[mac];
+
+  /// 保存 MQTT 参数到指定打印机的配置（按 MAC 索引）
+  Future<void> saveMqttParamsForMac(String mac, Map<String, dynamic> mqtt) async {
+    if (mac.isEmpty) return;
+    final existing = _printerConfigs[mac] ?? <String, String>{};
+    _printerConfigs[mac] = {
+      ...existing,
+      'broker_host': mqtt['broker_host']?.toString() ?? '',
+      'broker_port': mqtt['broker_port']?.toString() ?? '',
+      'mqtt_username': mqtt['mqtt_username']?.toString() ?? '',
+      'mqtt_password': mqtt['mqtt_password']?.toString() ?? '',
+      'subscribe_topic': mqtt['subscribe_topic']?.toString() ?? '',
+      'publish_topic': mqtt['publish_topic']?.toString() ?? '',
+      'tls_enabled': (mqtt['tls_enabled'] == true ||
+              mqtt['tls_enabled']?.toString() == 'true' ||
+              mqtt['tls_enabled'] == 1)
+          ? 'true'
+          : 'false',
+    };
+    await _savePrinterConfigs();
+  }
+
   // ── 从 IoT 设备管理 API 拉取 BLE 打印机的 MQTT 配置 ──
-  Future<bool> fetchBleConfig(String deviceKey) async {
+  Future<bool> fetchBleConfig(String deviceKey, {String? mac}) async {
     if (_baseUrl.isEmpty) {
       _lastError = '请先配置服务器地址';
       return false;
@@ -243,6 +289,14 @@ class ApiService extends ChangeNotifier {
 
           // 注入 MQTT 配置
           await MqttPushService.instance.configure(data);
+
+          // 将 MQTT 参数持久化到对应打印机的配置中（每台独立）
+          final ble = BleService.instance;
+          final targetMac = (mac != null && mac.isNotEmpty) ? mac : ble.savedDeviceId;
+          if (targetMac.isNotEmpty) {
+            await saveMqttParamsForMac(targetMac, data);
+            _log('[ApiService] 💾 已将 MQTT 参数关联到打印机 $targetMac');
+          }
 
           _log('[ApiService] ✅ 已从服务器拉取 BLE 配置: device=$_deviceId store=$_storeId');
           notifyListeners();
@@ -282,8 +336,19 @@ class ApiService extends ChangeNotifier {
   }
 
   // ── MQTT 推送开关（设置中开启/关闭）──
-  Future<void> setMqttEnabled(bool enabled) async {
+  Future<void> setMqttEnabled(bool enabled, {String? mac}) async {
     _mqttEnabled = enabled;
+    // 持久化到对应打印机（每台独立）
+    final ble = BleService.instance;
+    final targetMac = (mac != null && mac.isNotEmpty) ? mac : ble.savedDeviceId;
+    if (targetMac.isNotEmpty) {
+      final existing = _printerConfigs[targetMac] ?? <String, String>{};
+      _printerConfigs[targetMac] = {
+        ...existing,
+        'mqtt_enabled': enabled ? 'true' : 'false',
+      };
+      await _savePrinterConfigs();
+    }
     if (enabled && _storeId.isNotEmpty) {
       await MqttPushService.instance.setEnabled(true, storeId: _storeId);
     } else {
@@ -321,10 +386,15 @@ class ApiService extends ChangeNotifier {
 
       if (jobs.isEmpty) return;
 
-      // BLE 未连接：不消费任务（保留 pending 等待连接后打印），但提示原因
+      // BLE 未连接：先尝试按需自动重连，成功后再打印（被动+按需策略）
       if (BleService.instance.state != BleState.connected) {
-        _log('[ApiService] ⚠ 有 ${jobs.length} 个待打印任务，但蓝牙打印机未连接，等待连接后自动打印');
-        return;
+        _log('[ApiService] ⚠ 有 ${jobs.length} 个待打印任务，蓝牙未连接，尝试自动重连...');
+        final reconnected = await BleService.instance.ensureConnected();
+        if (!reconnected) {
+          _log('[ApiService] ❌ 自动重连失败，保留 ${jobs.length} 个任务等待下次触发');
+          return;
+        }
+        _log('[ApiService] ✅ 自动重连成功，继续打印 ${jobs.length} 个任务');
       }
 
       _log('[ApiService] 📥 自动拉取到 ${jobs.length} 个待打印任务');

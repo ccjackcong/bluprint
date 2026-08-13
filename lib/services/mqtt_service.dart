@@ -77,6 +77,32 @@ class MqttPushService extends ChangeNotifier {
     _log('⚙ 已加载 MQTT 配置: host=$_brokerHost port=$_brokerPort tls=$_tlsEnabled user=$_username topic=$_subscribeTopic store=$_storeId');
   }
 
+  /// 从「已保存的打印机配置」注入 MQTT 参数（切换打印机时恢复用）。
+  ///
+  /// 与 [configure] 的区别：数据来自本地 SharedPreferences 里的扁平 key
+  /// （broker_host/port/username/password/tls_enabled/subscribe_topic），
+  /// 而非后端 /api/iot/ble/config 返回的嵌套结构。
+  /// 返回是否成功注入（有用户名+主机才算有效配置）。
+  bool applyConfig(Map<String, dynamic> cfg) {
+    final host = cfg['broker_host']?.toString() ?? '';
+    final user = cfg['mqtt_username']?.toString() ?? '';
+    if (host.isEmpty || user.isEmpty) {
+      _log('⚠ 无已保存的 MQTT 参数，跳过注入');
+      return false;
+    }
+    _brokerHost = host;
+    _brokerPort = int.tryParse(cfg['broker_port']?.toString() ?? '') ?? 8883;
+    _username = user;
+    _password = cfg['mqtt_password']?.toString() ?? '';
+    _subscribeTopic = cfg['subscribe_topic']?.toString() ?? '';
+    _publishTopic = cfg['publish_topic']?.toString() ?? '';
+    final tlsVal = cfg['tls_enabled'];
+    _tlsEnabled = tlsVal == true || tlsVal?.toString() == 'true' || tlsVal == 1;
+    _configured = true;
+    _log('🔁 已从本地配置注入 MQTT 参数: host=$_brokerHost user=$_username topic=$_subscribeTopic');
+    return true;
+  }
+
   // ── 启用 / 禁用 ──
   Future<void> setEnabled(bool enabled, {String storeId = ''}) async {
     _enabled = enabled;

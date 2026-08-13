@@ -100,6 +100,10 @@ class BleService extends ChangeNotifier {
   Map<String, Map<String, String>> _printerUuids = {};
 
   /// 获取指定 MAC 的完整配置（API + BLE UUID + 品牌）
+  ///
+  /// 返回的 map 合并了 BLE 层（_printerUuids）的 UUID/品牌。
+  /// API/MQTT 配置通过 ApiService 单独获取（避免跨 service 循环依赖），
+  /// 设置页需要时自行调用 ApiService.instance.getPrinterConfig(mac)。
   Map<String, dynamic>? getConfigForMac(String mac) {
     if (!_printerUuids.containsKey(mac)) return null;
     return {
@@ -877,14 +881,30 @@ class BleService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _autoConnect() async {
-    if (_savedDeviceId == null) return;
+  /// 确保打印机已连接（被动+按需重连）。
+  ///
+  /// 已连接则直接返回 true；未连接且有已保存设备时尝试自动重连。
+  /// 供 ApiService 在「收到打印任务但 BLE 已空闲断开」时调用，
+  /// 实现按需重连：空闲零开销，有任务时自动恢复连接。
+  Future<bool> ensureConnected() async {
+    if (_state == BleState.connected && _writeChar != null) {
+      return true;
+    }
+    if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
+      _logMessage('未保存打印机，无法自动重连');
+      return false;
+    }
+    _logMessage('检测到待打印任务但打印机未连接，开始自动重连...');
+    return await _autoConnect();
+  }
+
+  Future<bool> _autoConnect() async {
+    if (_savedDeviceId == null) return false;
     _logMessage('尝试自动连接已保存的打印机...');
     try {
       final devices = await FlutterBluePlus.systemDevices([Guid(_savedDeviceId!)]);
       if (devices.isNotEmpty) {
-        await connect(devices.first);
-        return;
+        return await connect(devices.first);
       }
 
       _logMessage('系统配对设备中找不到，开始扫描匹配...');
@@ -897,12 +917,14 @@ class BleService extends ChangeNotifier {
       );
       if (matched.isNotEmpty) {
         _logMessage('扫描匹配成功，正在连接...');
-        await connect(matched.first.device);
+        return await connect(matched.first.device);
       } else {
         _logMessage('扫描也未找到已保存的设备，需手动连接');
+        return false;
       }
     } catch (e) {
       _logMessage('自动连接失败: $e');
+      return false;
     }
   }
 
