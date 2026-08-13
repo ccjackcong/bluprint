@@ -1,47 +1,36 @@
-Run flutter build apk --release
-Running Gradle task 'assembleRelease'...                        
-Warning: Flutter support for your project's Gradle version (8.14.0) will soon be dropped. Please upgrade your Gradle version to a version of at least 9.1.0 soon.
-Alternatively, use the flag "--android-skip-build-dependency-validation" to bypass this check.
+name: sanjoyapp_print
+description: SANJOY打印中转App - 接收Web端打印数据，通过BLE发送到标签打印机
+publish_to: 'none'
+version: 1.0.0+1
 
-Potential fix: Your project's gradle version is typically defined in the gradle wrapper file. By default, this can be found at /Users/runner/work/bluprint/bluprint/android/gradle/wrapper/gradle-wrapper.properties. 
-For more information, see https://docs.gradle.org/current/userguide/gradle_wrapper.html.
+environment:
+  sdk: '>=3.1.0 <4.0.0'
 
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_blue_plus: ^1.32.0
+  shelf: ^1.4.1
+  shelf_router: ^1.1.4
+  shared_preferences: ^2.2.2
+  http: ^1.2.0
+  cupertino_icons: ^1.0.6
+  mqtt_client: ^10.0.0
+  # 必须用 2.1.x+：2.0.x 的 path_provider_android 仍用已废弃的 v1 嵌入
+  # (PluginRegistry.Registrar)，CI 的 Flutter stable(≥3.29) 已移除 v1 嵌入，
+  # 报 "cannot find symbol PluginRegistry.Registrar"。2.1.x 改用 JNI(jnigen) 走 v2 嵌入，
+  # 可正常编译；但其传递依赖 jni:1.0.1 的 android/build.gradle 仅在 agpMajor<9 时自己
+  # apply kotlin-android，AGP 9 下依赖内置 Kotlin 自动注入，而内置 Kotlin 与 jni 的老式
+  # apply plugin: 语法冲突(dart-lang/native#3415)，两种开关都编不过。
+  # 修法在 CI(build.yml)：把 AGP 抬到 8.11.1、Gradle 锁 8.14，让 jni 自己 apply Kotlin；
+  # 同时 android.builtInKotlin=false 显式关闭内置 Kotlin，避免与 jni 自 apply 冲突。
+  path_provider: ">=2.1.0 <3.0.0"
+  path_provider_android: ">=2.1.0 <3.0.0"
 
-FAILURE: Build failed with an exception.
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
 
-* Where:
-Build file '/Users/runner/work/bluprint/bluprint/android/app/build.gradle.kts' line: 1
-
-* What went wrong:
-An exception occurred applying plugin request [id: 'dev.flutter.flutter-gradle-plugin']
-> Failed to apply plugin 'dev.flutter.flutter-gradle-plugin'.
-   > Error: Your project's Android Gradle Plugin version (Android Gradle Plugin version 8.9.2) is lower than Flutter's minimum supported version of Android Gradle Plugin version 8.11.1. Please upgrade your Android Gradle Plugin version. 
-     Alternatively, use the flag "--android-skip-build-dependency-validation" to bypass this check.
-
-     Potential fix: Your project's AGP version is typically defined in the plugins block of the `settings.gradle` file (/Users/runner/work/bluprint/bluprint/android/settings.gradle), by a plugin with the id of com.android.application. 
-     If you don't see a plugins block, your project was likely created with an older template version. In this case it is most likely defined in the top-level build.gradle file (/Users/runner/work/bluprint/bluprint/android/build.gradle) by the following line in the dependencies block of the buildscript: "classpath 'com.android.tools.build:gradle:<version>'".
-
-
-* Try:
-> Run with --stacktrace option to get the stack trace.
-> Run with --info or --debug option to get more log output.
-> Run with --scan to get full insights.
-> Get more help at https://help.gradle.org.
-
-BUILD FAILED in 1m 54s
-Running Gradle task 'assembleRelease'...                          116.0s
-
-┌─ Flutter Fix ────────────────────────────────────────────────────────────────────────┐
-│ [!] Starting AGP 9+, only the new DSL interface will be read.                        │
-│ This results in a build failure when applying the Flutter Gradle plugin at           │
-│ /Users/runner/work/bluprint/bluprint/android/app/build.gradle.kts.                   │
-│                                                                                      │
-│ To resolve this update flutter or opt out of `android.newDsl`.                       │
-│ For instructions on how to opt out, see:                                             │
-│ https://developer.android.com/build/releases/agp-9-0-0-release-notes                 │
-│                                                                                      │
-│ If you are not upgrading to AGP 9+, run `flutter analyze --suggestions` to check for │
-│ incompatible dependencies.                                                           │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-Gradle task assembleRelease failed with exit code 1
-Error: Process completed with exit code 1.
+flutter:
+  uses-material-design: true
