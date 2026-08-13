@@ -141,6 +141,11 @@ class MqttPushService extends ChangeNotifier {
     try {
       _client = mqtt.MqttServerClient.withPort(_brokerHost, 'bluprint_${_storeId}', _brokerPort);
 
+      // 关键：withPort 便捷构造器默认 keepAlivePeriod=0，必须显式设置，
+      // 否则 .keepAliveFor(60) 只改 CONNECT 报文字节、不启动 client 内部 ping 定时器，
+      // broker 读到 k0 → 空闲连接被 NAT/防火墙静默切断、App 不自知 → 推送丢失。
+      _client!.keepAlivePeriod = 60;
+
       _client!.secure = _tlsEnabled;
       if (_tlsEnabled) {
         _client!.securityContext = SecurityContext.defaultContext;
@@ -199,7 +204,7 @@ class MqttPushService extends ChangeNotifier {
     if (_currentTopic != null) {
       _client!.unsubscribe(_currentTopic!);
     }
-    _client!.subscribe(topic, mqtt.MqttQos.atMostOnce);
+    _client!.subscribe(topic, mqtt.MqttQos.atLeastOnce);
     _currentTopic = topic;
 
     // 设置消息回调
