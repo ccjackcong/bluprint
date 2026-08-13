@@ -22,7 +22,7 @@ dependencies:
   # 可正常编译；但其传递依赖 jni:1.0.1 的 android/build.gradle 仅在 agpMajor<9 时自己
   # apply kotlin-android，AGP 9 下依赖内置 Kotlin 自动注入，而内置 Kotlin 与 jni 的老式
   # apply plugin: 语法冲突(dart-lang/native#3415)，两种开关都编不过。
-  # 修法在 CI(build.yml)：把 AGP 降到 8.7、Gradle 降到 8.12，让 jni 自己 apply Kotlin；
+  # 修法在 CI(build.yml)：把 AGP 降到 8.9.2、Gradle 降到 8.14，让 jni 自己 apply Kotlin；
   # 同时 android.builtInKotlin=false 显式关闭内置 Kotlin，避免与 jni 自 apply 冲突。
   path_provider: ">=2.1.0 <3.0.0"
   path_provider_android: ">=2.1.0 <3.0.0"
